@@ -1,0 +1,37 @@
+C:
+  image: $CI_REGISTRY/devtools/images/buildtools
+  stage: test
+  script:
+    - apt update && apt install -y libgmp-dev libssl-dev
+    - mkdir build
+    - cd build
+    - cmake -DWITH_THREADS=${THREADS} ..
+    - make
+    - make check ARGS="--verbose"
+    - make benchs_build examples
+  parallel:
+    matrix:
+      - THREADS: "ON"
+      - THREADS: "OFF"
+  #not working ??
+  #rules:
+  #  - changes:
+  #    - src/*
+  #    - tests/*
+  #    - benchs/*
+
+pages:
+  image: $CI_REGISTRY/devtools/images/doxygen
+  script:
+    - apt update && apt install -y libgmp-dev libssl-dev cmake g++
+    - mkdir build
+    - cd build
+    - cmake ..
+    - make doc
+    - cd ..
+    - mv build/doc/html public
+  artifacts:
+    paths:
+      - public
+  only:
+    - master

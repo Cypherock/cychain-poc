@@ -1,0 +1,3 @@
+[submodule "trezor-firmware"]
+	path = trezor-firmware
+	url = git@github.com:trezor/trezor-firmware.git
