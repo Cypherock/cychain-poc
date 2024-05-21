@@ -1,0 +1,3 @@
+[submodule "include/trezor-firmware"]
+	path = include/trezor-firmware
+	url = https://github.com/trezor/trezor-firmware.git
