@@ -236,7 +236,7 @@ Finally, the `r` and `s` values are combined together to get the signature.
 ## References
 1. [https://eprint.iacr.org/2015/047](https://eprint.iacr.org/2015/047)
 2. [https://eprint.iacr.org/2018/791](https://eprint.iacr.org/2018/791)
-3. [https://www.researchgate.net/publication/332411688_Improved_Efficiency_of_a_Linearly_Homomorphic_Cryptosystem](https://www.researchgate.net/publication/332411688_Improved_Efficiency_of_a_Linearly_Homomorphic_Cryptosystem)
+3. [https://dl.acm.org/doi/abs/10.1007/978-3-030-16458-4_20](https://dl.acm.org/doi/abs/10.1007/978-3-030-16458-4_20)
 4. [https://eprint.iacr.org/2022/1466](https://eprint.iacr.org/2022/1466)
 5. [https://eprint.iacr.org/2022/1143](https://eprint.iacr.org/2022/1143)
 6. [https://eprint.iacr.org/2021/205](https://eprint.iacr.org/2021/205)
