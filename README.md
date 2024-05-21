@@ -38,7 +38,7 @@ Examples:
 
 ## Cryptography Primitives
 ### Threshold Additive Homomorphic Encryption
-We use the CL-HSMq scheme introduced in [https://eprint.iacr.org/2018/791](https://eprint.iacr.org/2018/791) which has an adjustable message space of an odd prime `q`, but also variant modulo `q^k` and product of primes as analysed in [DJS19](https://www.researchgate.net/publication/332411688_Improved_Efficiency_of_a_Linearly_Homomorphic_Cryptosystem). We define `q` to be the order of `SECP256K1` curve to solve ECDSA circuit in encrypted form. We use the C++ class group implementation [BICYCL](https://eprint.iacr.org/2022/1466) for our PoC which also support CL-HSM2k construction described in [https://eprint.iacr.org/2022/1143](https://eprint.iacr.org/2022/1143) (although not required for us).
+We use the CL-HSMq scheme introduced in [https://eprint.iacr.org/2018/791](https://eprint.iacr.org/2018/791) which has an adjustable message space of an odd prime `q`, but also variant modulo `q^k` and product of primes as analysed in [DJS19](https://dl.acm.org/doi/abs/10.1007/978-3-030-16458-4_20). We define `q` to be the order of `SECP256K1` curve to solve ECDSA circuit in encrypted form. We use the C++ class group implementation [BICYCL](https://eprint.iacr.org/2022/1466) for our PoC which also support CL-HSM2k construction described in [https://eprint.iacr.org/2022/1143](https://eprint.iacr.org/2022/1143) (although not required for us).
 
 The scheme describes the following functions:
 
@@ -97,7 +97,7 @@ The paper [https://eprint.iacr.org/2021/205](https://eprint.iacr.org/2021/205) p
 ## Distributed Key Generation
 We require the distribution of class group decryption key among participants so that they can perform threshold decryption of an encrypted message using their share of the decryption key. 
 
-We refer [https://eprint.iacr.org/2022/1437](https://eprint.iacr.org/2022/1437) for linear integer secret sharing and follow the 2 round DKG protocol described in [https://www.ndss-symposium.org/ndss-paper/secure-multiparty-computation-of-threshold-signatures-made-more-efficient/](https://www.ndss-symposium.org/ndss-paper/secure-multiparty-computation-of-threshold-signatures-made-more-efficient/) to prevent public key biasing.
+We refer [https://eprint.iacr.org/2022/1437](https://eprint.iacr.org/2022/1437) for linear integer secret sharing and follow the 2 round DKG protocol described in [https://www.ndss-symposium.org/ndss-paper/secure-multiparty-computation-of-threshold-signatures-made-more-efficient/](https://www.ndss-symposium.org/wp-content/uploads/2024-601-paper.pdf) to prevent public key biasing.
 
 To achieve proactive security, we use the distributed key re-sharing technique desribed in [https://eprint.iacr.org/2021/339](https://eprint.iacr.org/2021/339) but modified for class group keys.
 
