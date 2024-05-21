@@ -94,10 +94,59 @@ We require these proofs to achieve the identifiable abort property which allows 
 
 The paper [https://eprint.iacr.org/2021/205](https://eprint.iacr.org/2021/205) provides the design for 1st and 3rd proofs and the paper [https://eprint.iacr.org/2022/1437](https://eprint.iacr.org/2022/1437) provides the design for the 2nd proof. The design for 4th proof can be constructed from the above proof systems after only a slight modification.
 
+### Integer Secret Sharing
+The reconstruction or the usage of shamir shares involves division in the lagrange coefficients which are not supported groups with unknown order. The following protocol by [https://eprint.iacr.org/2022/1437](https://eprint.iacr.org/2022/1437) is used to share secret integers:
+- To distribute the secret `s`, create polynomial `F(x) = n! * s + a_{1} * x + ... + a_{t-1} * x^(t - 1)`. (Here, `n!` is multiplied to the integer `s` to prevent the leakage `s mod i` when `F(i)` is shared).
+- Share `F(i)` for all `i` in set of participant indices.
+- To reconstruct, get `t` or more shares and return `(n!)^2 * s = sum(n! * L_i * F(i))` where `L_i` is the lagrange coefficient. It is multiplied with `n!` to cancel out the denominator.
+
+**Notes**
+> The reconstruction returns `(n!)^2 * s` instead of `s`.
+
+> Other coefficients in the polynomial should be chosen from a large enough interval to hide a. The range mentioned by [https://www.ndss-symposium.org/ndss-paper/secure-multiparty-computation-of-threshold-signatures-made-more-efficient/](https://www.ndss-symposium.org/ndss-paper/secure-multiparty-computation-of-threshold-signatures-made-more-efficient/) is `[0, 2^(log2(B) + 1 + 2logt + nlogn + λd)]` where `B` is the secret key bound of class group parameters.
+
+### Chunking
+To share class group key shares which are of length `(n^t)*2^(log2(B) + 1 + 2logt + nlogn + λd)` using the encryption scheme with message space `q` where `q` is the order of curve `SECP256K1`, we have to perform chunking of the shares.
+- Decompose share `X` in base `q` such that `X = x_k * q^k + x_{k-1} * q^(k-1) + ... + x_1 * q + x_0`. This decomposition can be done by performing repeated mod `q` and integer division.
+- Return the chunks `[x_k, x_{k-1}, ..., x_1, x_0]`.
+
 ## Distributed Key Generation
 We require the distribution of class group decryption key among participants so that they can perform threshold decryption of an encrypted message using their share of the decryption key. 
 
-We refer [https://eprint.iacr.org/2022/1437](https://eprint.iacr.org/2022/1437) for linear integer secret sharing and follow the 2 round DKG protocol described in [https://www.ndss-symposium.org/ndss-paper/secure-multiparty-computation-of-threshold-signatures-made-more-efficient/](https://www.ndss-symposium.org/wp-content/uploads/2024-601-paper.pdf) to prevent public key biasing.
+We refer the 2 round DKG protocol described in [https://www.ndss-symposium.org/ndss-paper/secure-multiparty-computation-of-threshold-signatures-made-more-efficient/](https://www.ndss-symposium.org/ndss-paper/secure-multiparty-computation-of-threshold-signatures-made-more-efficient/) to prevent public key biasing.
+
+> Note: Pederson commitments are used in class groups.
+
+### Round 1
+All `n` users perform the following:
+- Sample two random secret values `X_i` and `X'_i` in the secretkey bounds of CL cryptosystem. `X'_i`'s shares are used as hiding factors in Pederson commitments.
+- Compute `n` shares using the integer secret sharing of the above two secrets. The `j`-th shares are represented as `X_ij` and `X'_ij`.
+- For each share `X_ij`, compute it's Pederson commitment using `X'_ij` as `PC_ij`.
+- Compute `PK_ij = h^(X_ij * n!)` and encrypt this class group element using `j`-th participant's encryption key to get `C-PK_ij`. Here `h` is the generator of subgroup of unknown order.
+- Compute chunks of all shares `X_ij` and encrypt them using `j`-th participant's encryption key.
+- Compute the proof `P_ij` to prove the usage of same `X_ij` in the chunks and `PC_ij`.
+- Broadcast the proof, encrypted values and Pederson commitments.
+
+At the end, the `n` users peform the following:
+- Compute duals for all participant indices.
+- Perfrom dual-code verification on all the Pederson commitments `PC_ij` in class groups.
+- Verify all the proofs `P_ij`.
+- Remove the participants for whose data, the verification fails.
+
+### Round 2
+All `n` users perform the following:
+- Get all the encrypted chunked shares from `j` parties, and decrypt the chunks.
+- Combine the chunks to get `j` shares and add all shares to get one share `x_i` for self.
+- Compute `Pub-x_i = h^(x_i * n!)`.
+- Combine all `C-PK_ij` to get `C-PK_i` using homomorphic addition.
+- Compute proof of knowledge of `x_i` and correct `Pub-x_i` and `C-PK_i`.
+- Broadcast the proof, `Pub-x_i` and `C-PK_i`.
+
+At the end, the `n` users perform the following:
+- Combine all `C-PK_ij` to get `C-PK_i` using homomorphic addition.
+- Verify the proof for `C-PK_i` and `Pub-x_i`.
+- Remove the participant `i` if the proof verification fails.
+- Return the public encryption key as, `PK = prod(Pub-x_i ^ (n! * L_i))` where `L_i` is lagrange coefficient.
 
 To achieve proactive security, we use the distributed key re-sharing technique desribed in [https://eprint.iacr.org/2021/339](https://eprint.iacr.org/2021/339) but modified for class group keys.
 
