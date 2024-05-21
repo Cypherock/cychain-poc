@@ -9,6 +9,33 @@ The encryption scheme has multiple advantageous features:
 
 The scheme is constructed via class groups of unknown order which can be created with a subgroup (F) where the discrete log problem is easy to solve. The other subgroup (H) has an unknown order where the discrete log problem is hard.
 
+## Installation
+To compile the code, a C++ compiler and CMake 3.5.1 or later are necessary, and the following libraries are required:
+- GMP
+- openSSL
+
+On Debian and Ubuntu, the necessary files can be installed with
+`apt install g++ libgmp-dev libssl-dev cmake`
+
+### Steps to build:
+- Clone the repo and the submodules, `git clone https://github.com/Cypherock/cychain-poc.git --recurse-submodules`
+- `cd cychain-poc`
+- `mkdir build`
+- `cd build`
+- `cmake ..`
+- `make`
+
+### Execution Instructions
+Run the executable `cychain-sig-poc` in `build/` directory as follows:
+`./cychain-sig-poc <num-of-users> <num-of-validators> <sec-level>`
+
+Examples:
+`./cychain-sig-poc 10 1000 128`
+`./cychain-sig-poc 100 1000 128`
+`./cychain-sig-poc 100 2000 128`
+
+> \<sec-level\> can only be 128 or 256.
+
 ## Cryptography Primitives
 ### Threshold Additive Homomorphic Encryption
 We use the CL-HSMq scheme introduced in [https://eprint.iacr.org/2018/791](https://eprint.iacr.org/2018/791) which has an adjustable message space of an odd prime `q`, but also variant modulo `q^k` and product of primes as analysed in [DJS19](https://www.researchgate.net/publication/332411688_Improved_Efficiency_of_a_Linearly_Homomorphic_Cryptosystem). We define `q` to be the order of `SECP256K1` curve to solve ECDSA circuit in encrypted form. We use the C++ class group implementation [BICYCL](https://eprint.iacr.org/2022/1466) for our PoC which also support CL-HSM2k construction described in [https://eprint.iacr.org/2022/1143](https://eprint.iacr.org/2022/1143) (although not required for us).
