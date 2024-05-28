@@ -18,6 +18,8 @@
 #include <future>
 
 #include "bicycl.hpp"
+#include "ThreadPool.h"
+#include "CryptoUtils.h"
 
 extern "C"
 {
@@ -28,170 +30,6 @@ extern "C"
 }
 
 using std::string;
-
-// Function to convert a single hex character to its integer value
-unsigned char hex_char_to_int(char c)
-{
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    if (c >= 'a' && c <= 'f')
-        return 10 + c - 'a';
-    if (c >= 'A' && c <= 'F')
-        return 10 + c - 'A';
-    return 0;
-}
-
-// Function to convert hex string to byte array
-void hex_string_to_byte_array(const char *hex_string, uint8_t *byte_array, size_t byte_array_size)
-{
-    size_t hex_string_length = strlen(hex_string);
-
-    // Ensure the hex string has an even number of characters
-    if (hex_string_length % 2 != 0)
-    {
-        printf("Hex string must have an even number of characters.\n");
-        return;
-    }
-
-    // Ensure the byte array is large enough to hold the converted hex string
-    if (byte_array_size < hex_string_length / 2)
-    {
-        printf("Byte array is too small to hold the converted hex string.\n");
-        return;
-    }
-
-    // Convert each pair of hex characters to a byte
-    for (size_t i = 0; i < hex_string_length; i += 2)
-    {
-        byte_array[i / 2] = (hex_char_to_int(hex_string[i]) << 4) + hex_char_to_int(hex_string[i + 1]);
-    }
-}
-
-// Function to convert a single byte to two hex characters
-void byte_to_hex(unsigned char byte, char hex[3])
-{
-    const char hex_chars[] = "0123456789abcdef";
-    hex[0] = hex_chars[(byte >> 4) & 0x0F];
-    hex[1] = hex_chars[byte & 0x0F];
-    hex[2] = '\0'; // Null-terminator for the two-character hex string
-}
-
-// Function to convert byte array to hex string
-void byte_array_to_hex_string(const uint8_t *byte_array, size_t byte_array_size, char *hex_string)
-{
-    for (size_t i = 0; i < byte_array_size; i++)
-    {
-        char hex[3];
-        byte_to_hex(byte_array[i], hex);
-        strcat(hex_string, hex);
-    }
-}
-
-void print_bytes(uint8_t *bytes, size_t len)
-{
-    for (size_t i = 0; i < len; i++)
-    {
-        printf("%02x", bytes[i]);
-    }
-    printf("\n");
-}
-
-void print_bignum256(bignum256 *bn)
-{
-    uint8_t bytes[32];
-    bn_write_be(bn, bytes);
-    for (int i = 0; i < 32; i++)
-    {
-        printf("%02x", bytes[i]);
-    }
-    printf("\n");
-}
-
-void rand_bytes(uint8_t *bytes, size_t len)
-{
-    // Ensure OpenSSL is properly initialized
-    if (RAND_bytes(bytes, len) != 1)
-    {
-        // Handle error
-        fprintf(stderr, "Error generating random bytes\n");
-        exit(EXIT_FAILURE);
-    }
-}
-
-void rand_bignum256(const bignum256 *curve_order, bignum256 *res)
-{
-    uint8_t random_bytes[32];
-    rand_bytes(random_bytes, 32);
-
-    bn_read_be(random_bytes, res);
-
-    while (!bn_is_less(res, curve_order))
-    {
-        bn_mod(res, curve_order);
-    }
-}
-
-class ThreadPool {
-public:
-    ThreadPool(size_t threads) : stop(false), active_tasks(0) {
-        for(size_t i = 0; i < threads; ++i) {
-            workers.emplace_back([this] {
-                while(true) {
-                    std::function<void()> task;
-
-                    {
-                        std::unique_lock<std::mutex> lock(this->queue_mutex);
-                        this->condition.wait(lock, [this]{ return this->stop || !this->tasks.empty(); });
-                        if(this->stop && this->tasks.empty())
-                            return;
-                        task = std::move(this->tasks.front());
-                        this->tasks.pop();
-                    }
-
-                    ++active_tasks;
-                    task();
-                    --active_tasks;
-                    completion_condition.notify_all();
-                }
-            });
-        }
-    }
-
-    template<class F, class... Args>
-    void enqueue(F&& f, Args&&... args) {
-        auto task = std::bind(std::forward<F>(f), std::forward<Args>(args)...);
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex);
-            if(stop)
-                throw std::runtime_error("enqueue on stopped ThreadPool");
-            tasks.emplace(task);
-        }
-        condition.notify_one();
-    }
-
-    void wait() {
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        completion_condition.wait(lock, [this]() { return tasks.empty() && active_tasks == 0; });
-    }
-
-    ~ThreadPool() {
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex);
-            stop = true;
-        }
-        condition.notify_all();
-        for(std::thread &worker: workers)
-            worker.join();
-    }
-
-private:
-    std::vector<std::thread> workers;
-    std::queue<std::function<void()>> tasks;
-    std::mutex queue_mutex;
-    std::condition_variable condition, completion_condition;
-    bool stop;
-    std::atomic<int> active_tasks;
-};
 
 class PolicyContract
 {
@@ -214,7 +52,7 @@ public:
         size_t size = message_hash_hex_str.length() / 2;
         uint8_t message_bytes[size];
 
-        hex_string_to_byte_array(message_hash_hex_str.c_str(), message_bytes, size);
+        CryptoUtils::hex_string_to_byte_array(message_hash_hex_str.c_str(), message_bytes, size);
 
         if (size == 0)
         {
@@ -285,7 +123,7 @@ public:
         std::cout << "Group registered with group ID: " << group_id << std::endl;
 
         char hex_c_str[131] = {0};
-        byte_array_to_hex_string(group_pub_key, 65, hex_c_str);
+        CryptoUtils::byte_array_to_hex_string(group_pub_key, 65, hex_c_str);
 
         // Store the policy, public key, and cipher text in the map under the generated ID
         group_registry.insert(std::make_pair(group_id, std::make_tuple(policy, public_key, cipher_text, std::string(hex_c_str))));
@@ -505,7 +343,7 @@ public:
 
         // print the final point
         std::cout << "r value (k.G's x coordinate) of the signature: ";
-        print_bignum256(&std::get<2>(item).x);
+        CryptoUtils::print_bignum256(&std::get<2>(item).x);
     }
 
     // check for active signature generation requests and return group ids.
@@ -787,7 +625,7 @@ public:
         curve_point kvi_dot_G;
 
         bignum256 kvi_bn;
-        rand_bignum256(&curve->order, &kvi_bn);
+        CryptoUtils::rand_bignum256(&curve->order, &kvi_bn);
 
         uint8_t kvi_bytes[32];
         bn_write_be(&kvi_bn, kvi_bytes);
@@ -1016,7 +854,7 @@ public:
         const ecdsa_curve *curve = get_curve_by_name(SECP256K1_NAME)->params;
 
         bignum256 kgi_bn;
-        rand_bignum256(&curve->order, &kgi_bn);
+        CryptoUtils::rand_bignum256(&curve->order, &kgi_bn);
 
         uint8_t kgi_bytes[32];
         bn_write_be(&kgi_bn, kgi_bytes);
@@ -1157,7 +995,7 @@ public:
 
         // private signing key (never actually exists in plain form)
         bignum256 x_bn;
-        rand_bignum256(&curve->order, &x_bn);
+        CryptoUtils::rand_bignum256(&curve->order, &x_bn);
         uint8_t signing_private_key_bytes[32];
         bn_write_be(&x_bn, signing_private_key_bytes);
 
@@ -1169,7 +1007,7 @@ public:
         
         // print group_pub_key
         std::cout << "Group verification key: ";
-        print_bytes(group_pub_key, 65);
+        CryptoUtils::print_bytes(group_pub_key, 65);
 
         // encrypted signing key is publicly available
         BICYCL::CL_HSMqk::ClearText x_cleartext = BICYCL::CL_HSMqk::ClearText(pp, x);
@@ -1492,13 +1330,13 @@ int main(int argc, char* argv[])
     // print signature
     std::cout << "\n";
     std::cout << "Signature: ";
-    print_bytes(sig_bytes, 64);
+    CryptoUtils::print_bytes(sig_bytes, 64);
 
     uint8_t verification_key_bytes[65];
-    hex_string_to_byte_array(acc.get_verification_key(group_id).c_str(), verification_key_bytes, 65);
+    CryptoUtils::hex_string_to_byte_array(acc.get_verification_key(group_id).c_str(), verification_key_bytes, 65);
 
     uint8_t message_hash_bytes[32];
-    hex_string_to_byte_array(std::get<3>(r1_data).c_str(), message_hash_bytes, 32);
+    CryptoUtils::hex_string_to_byte_array(std::get<3>(r1_data).c_str(), message_hash_bytes, 32);
 
     if (ecdsa_verify_digest(curve, verification_key_bytes, sig_bytes, message_hash_bytes) == 0)
     {
