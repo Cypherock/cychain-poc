@@ -63,9 +63,8 @@ private:
     // validators and group will broadcast their sig-gen rounds data to mempool
     std::map<std::string, std::tuple<PolicyContract *, BICYCL::CL_HSMqk::PublicKey, BICYCL::CL_HSMqk::CipherText, std::string>> group_registry;
     std::map<std::string, std::tuple<std::string, BICYCL::CL_HSMqk::CipherText, curve_point, std::string>> round1_data;
-    std::map<std::string, std::tuple<std::string, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText>> round2_data;
-    std::map<std::string, std::tuple<std::string, BICYCL::CL_HSMqk::CipherText>> round3_data;
-    std::map<std::string, std::tuple<std::string, BICYCL::CL_HSMqk::ClearText>> round4_data;
+    std::map<std::string, std::tuple<std::string, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText>> round2_data;
+    std::map<std::string, std::tuple<std::string, BICYCL::CL_HSMqk::ClearText>> round3_data;
     bool is_setup = false;
 
 public:
@@ -390,7 +389,9 @@ public:
         BICYCL::RandGen randgen;
 
         std::cout << "ACC combines round 2 data of validator network and the user group.\n";
-        std::string group_id = std::get<0>(get_round1_data(request_id));
+
+        std::tuple<std::string, BICYCL::CL_HSMqk::CipherText, curve_point, std::string> r1_data = get_round1_data(request_id);
+        std::string group_id = std::get<0>(r1_data);
         BICYCL::CL_HSMqk::PublicKey ektp = get_public_key(group_id);
 
         // Determine the segment size and number of threads
@@ -431,10 +432,27 @@ public:
             enc_p_times_k = pp.add_ciphertexts(ektp, enc_p_times_k, std::get<2>(thread_result[i]), randgen);
         }
 
-        round2_data.insert(std::make_pair(request_id, std::make_tuple(group_id, enc_p, enc_p_times_x, enc_p_times_k)));
+        // r (x-coordinate of k.G)
+        BICYCL::Mpz r(0UL);
+        uint8_t r_bytes[32];
+        bn_write_be(&(std::get<2>(r1_data)).x, r_bytes);
+        BICYCL::Mpz::from_bytes(r, r_bytes, 32);
+
+        // message hash
+        BICYCL::Mpz message_hash(0UL);
+        std::string message_hash_str = std::get<3>(r1_data);
+        BICYCL::Mpz::set_str(message_hash, message_hash_str.c_str(), 16);
+
+        std::cout << "ACC computes encrypted z from the encrypted data.\n";
+        BICYCL::CL_HSMqk::CipherText enc_z = pp.add_ciphertexts(ektp,
+                                                                pp.scal_ciphertexts(ektp, enc_p, message_hash, randgen),
+                                                                pp.scal_ciphertexts(ektp, enc_p_times_x, r, randgen),
+                                                                randgen);
+
+        round2_data.insert(std::make_pair(request_id, std::make_tuple(group_id, enc_p, enc_p_times_x, enc_p_times_k, enc_z)));
     }
 
-    std::tuple<std::string, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText> get_round2_data(const std::string &request_id)
+    std::tuple<std::string, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText> get_round2_data(const std::string &request_id)
     {
         if (round2_data.find(request_id) != round2_data.end())
         {
@@ -493,7 +511,7 @@ public:
         return BICYCL::CL_HSMqk::ClearText (pp, pp.dlog_in_F(c2));
     }
 
-    void upload_r3_data(std::string request_id, BICYCL::QFI partial_decryptions[], size_t size, ThreadPool *pool)
+    void upload_r3_data(std::string request_id, BICYCL::QFI w_partial_decryptions[], BICYCL::QFI z_partial_decryptions[], size_t size, ThreadPool *pool)
     {
         if (is_setup == false)
         {
@@ -503,12 +521,14 @@ public:
         std::cout << "ACC combines round 3 data of validator network and the user group.\n";
 
         std::tuple<std::string, BICYCL::CL_HSMqk::CipherText, curve_point, std::string> r1_data = get_round1_data(request_id);
-        std::tuple<std::string, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText> r2_data = get_round2_data(request_id);
+        std::tuple<std::string, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText> r2_data = get_round2_data(request_id);
 
         BICYCL::CL_HSMqk::CipherText enc_p_times_k = std::get<3>(r2_data);
-        BICYCL::CL_HSMqk::ClearText w = agg_partial_decryptions_parallel(partial_decryptions, size, enc_p_times_k, pool);
+        BICYCL::CL_HSMqk::CipherText enc_z = std::get<4>(r2_data);
 
-        std::cout << "ACC computes encrypted signature from the encrypted data.\n";
+        BICYCL::CL_HSMqk::ClearText w = agg_partial_decryptions_parallel(w_partial_decryptions, size, enc_p_times_k, pool);
+        BICYCL::CL_HSMqk::ClearText z = agg_partial_decryptions_parallel(z_partial_decryptions, size, enc_z, pool);
+
         std::string group_id = std::get<0>(r1_data);
         BICYCL::CL_HSMqk::PublicKey ektp = get_public_key(group_id);
         BICYCL::RandGen randgen;
@@ -517,71 +537,19 @@ public:
         BICYCL::Mpz w_inv(0UL);
         BICYCL::Mpz::mod_inverse(w_inv, w, pp.q());
 
-        // message hash
-        BICYCL::Mpz message_hash(0UL);
-        std::string message_hash_str = std::get<3>(r1_data);
-        BICYCL::Mpz::set_str(message_hash, message_hash_str.c_str(), 16);
+        // contract then computes s = z * w^-1
+        BICYCL::Mpz::mul(z, z, w_inv);
+        BICYCL::Mpz::mod(z, z, pp.q());
 
-        // contract computes w^-1 * hash(m) and w^-1 * r (used in computing encrypted signature)
-        BICYCL::Mpz w_inv_times_message_hash(0UL);
-        BICYCL::Mpz::mul(w_inv_times_message_hash, w_inv, message_hash);
-        // BICYCL::Mpz::mod(w_inv_times_message_hash, w_inv_times_message_hash, q);
-
-        // r (x-coordinate of k.G)
-        BICYCL::Mpz r(0UL);
-        uint8_t r_bytes[32];
-        bn_write_be(&(std::get<2>(r1_data)).x, r_bytes);
-        BICYCL::Mpz::from_bytes(r, r_bytes, 32);
-
-        BICYCL::Mpz w_inv_times_r(0UL);
-        BICYCL::Mpz::mul(w_inv_times_r, w_inv, r);
-        // BICYCL::Mpz::mod(w_inv_times_r, w_inv_times_r, q);
-
-        BICYCL::CL_HSMqk::CipherText enc_s = pp.add_ciphertexts(ektp,
-                                                                pp.scal_ciphertexts(ektp, std::get<1>(r2_data), w_inv_times_message_hash, randgen),
-                                                                pp.scal_ciphertexts(ektp, std::get<2>(r2_data), w_inv_times_r, randgen),
-                                                                randgen);
-
-        round3_data.insert(std::make_pair(request_id, std::make_tuple(group_id, enc_s)));
+        std::cout << "ACC stores the final computed signature.\n";
+        round3_data.insert(std::make_pair(request_id, std::make_tuple(group_id, z)));
     }
 
-    std::tuple<std::string, BICYCL::CL_HSMqk::CipherText> get_round3_data(const std::string &request_id)
+    std::tuple<std::string, BICYCL::CL_HSMqk::ClearText> get_round3_data(const std::string &request_id)
     {
         if (round3_data.find(request_id) != round3_data.end())
         {
             return round3_data.at(request_id);
-        }
-        else
-        {
-            throw std::runtime_error("Request ID not found"); // Throw an error if the request ID is not found
-        }
-    }
-
-    void upload_r4_data(std::string request_id, BICYCL::QFI partial_decryptions[], size_t size)
-    {
-        if (is_setup == false)
-        {
-            throw std::runtime_error("Access Control Contract not setup");
-        }
-
-        std::cout << "ACC combines round 4 data of validator network and the user group.\n";
-
-        std::tuple<std::string, BICYCL::CL_HSMqk::CipherText> r3_data = get_round3_data(request_id);
-
-        BICYCL::CL_HSMqk::CipherText enc_s = std::get<1>(r3_data);
-        BICYCL::CL_HSMqk::ClearText s = pp.agg_partial_decryptions(partial_decryptions, size, enc_s);
-
-        std::string group_id = std::get<0>(r3_data);
-
-        std::cout << "ACC stores the final decrypted signature.\n";
-        round4_data.insert(std::make_pair(request_id, std::make_tuple(group_id, s)));
-    }
-
-    std::tuple<std::string, BICYCL::CL_HSMqk::ClearText> get_round4_data(const std::string &request_id)
-    {
-        if (round4_data.find(request_id) != round4_data.end())
-        {
-            return round4_data.at(request_id);
         }
         else
         {
@@ -651,23 +619,13 @@ public:
     }
 
     void compute_r3_data(BICYCL::CL_HSMqk pp,
-                         BICYCL::CL_HSMqk::CipherText enc_p_times_k,
+                         BICYCL::CL_HSMqk::CipherText encrypted_message,
                          BICYCL::QFI &part_dec)
     {
         BICYCL::Mpz lambda(0UL);
         lambda = string("1");
 
-        part_dec = pp.partial_decrypt(BICYCL::CL_HSMqk::SecretKey(pp, decryption_key_share), lambda, enc_p_times_k);
-    }
-
-    void compute_r4_data(BICYCL::CL_HSMqk pp,
-                         BICYCL::CL_HSMqk::CipherText enc_s,
-                         BICYCL::QFI &part_dec)
-    {
-        BICYCL::Mpz lambda(0UL);
-        lambda = string("1");
-
-        part_dec = pp.partial_decrypt(BICYCL::CL_HSMqk::SecretKey(pp, decryption_key_share), lambda, enc_s);
+        part_dec = pp.partial_decrypt(BICYCL::CL_HSMqk::SecretKey(pp, decryption_key_share), lambda, encrypted_message);
     }
 };
 
@@ -787,32 +745,18 @@ public:
         }
     }
 
-    void participate_in_round3(std::string request_id, BICYCL::QFI partial_decryptions[], size_t offset, ThreadPool *pool)
+    void participate_in_round3(std::string request_id, BICYCL::QFI w_partial_decryptions[], BICYCL::QFI z_partial_decryptions[], size_t offset, ThreadPool *pool)
     {
         std::cout << "Validator Network retrieves round 2 data from ACC.\n";
         // get round 2 data
-        std::tuple<std::string, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText> round2_data = acc->get_round2_data(request_id);
+        std::tuple<std::string, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText> round2_data = acc->get_round2_data(request_id);
 
         std::cout << "Validators in the validator network compute round 3 data parallelly.\n";
         size_t index = offset;
         for (Validator &validator : validators)
         {
-            pool->enqueue(&Validator::compute_r3_data, &validator, pp, std::get<3>(round2_data), std::ref(partial_decryptions[index]));
-            ++index;
-        }
-    }
-
-    void participate_in_round4(std::string request_id, BICYCL::QFI partial_decryptions[], size_t offset, ThreadPool *pool)
-    {
-        std::cout << "Validator Network retrieves round 3 data from ACC.\n";
-        // get round 3 data
-        std::tuple<std::string, BICYCL::CL_HSMqk::CipherText> round3_data = acc->get_round3_data(request_id);
-
-        std::cout << "Validators in the validator network compute round 4 data parallelly.\n";
-        size_t index = offset;
-        for (Validator &validator : validators)
-        {
-            pool->enqueue(&Validator::compute_r4_data, &validator, pp, std::get<1>(round3_data), std::ref(partial_decryptions[index]));
+            pool->enqueue(&Validator::compute_r3_data, &validator, pp, std::get<3>(round2_data), std::ref(w_partial_decryptions[index]));
+            pool->enqueue(&Validator::compute_r3_data, &validator, pp, std::get<4>(round2_data), std::ref(z_partial_decryptions[index]));
             ++index;
         }
     }
@@ -882,23 +826,13 @@ public:
     }
 
     void compute_r3_data(BICYCL::CL_HSMqk pp,
-                         BICYCL::CL_HSMqk::CipherText enc_p_times_k,
+                         BICYCL::CL_HSMqk::CipherText encrypted_message,
                          BICYCL::QFI &part_dec)
     {
         BICYCL::Mpz lambda(0UL);
         lambda = string("1");
 
-        part_dec = pp.partial_decrypt(BICYCL::CL_HSMqk::SecretKey(pp, decryption_key_share), lambda, enc_p_times_k);
-    }
-
-    void compute_r4_data(BICYCL::CL_HSMqk pp,
-                         BICYCL::CL_HSMqk::CipherText enc_s,
-                         BICYCL::QFI &part_dec)
-    {
-        BICYCL::Mpz lambda(0UL);
-        lambda = string("1");
-
-        part_dec = pp.partial_decrypt(BICYCL::CL_HSMqk::SecretKey(pp, decryption_key_share), lambda, enc_s);
+        part_dec = pp.partial_decrypt(BICYCL::CL_HSMqk::SecretKey(pp, decryption_key_share), lambda, encrypted_message);
     }
 };
 
@@ -1067,32 +1001,18 @@ public:
         }
     }
 
-    void participate_in_round3(std::string request_id, BICYCL::QFI partial_decryptions[], size_t offset, ThreadPool *pool)
+    void participate_in_round3(std::string request_id, BICYCL::QFI w_partial_decryptions[], BICYCL::QFI z_partial_decryptions[], size_t offset, ThreadPool *pool)
     {
         // get round 2 data
         std::cout << "User group retrieves round 2 data from ACC.\n";
-        std::tuple<std::string, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText> round2_data = acc->get_round2_data(request_id);
+        std::tuple<std::string, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText, BICYCL::CL_HSMqk::CipherText> round2_data = acc->get_round2_data(request_id);
 
         std::cout << "Users in the user group compute round 3 data parallelly.\n";
         size_t index = offset;
         for (User &user : users)
         {
-            pool->enqueue(&User::compute_r3_data, &user, pp, std::get<3>(round2_data), std::ref(partial_decryptions[index]));
-            ++index;
-        }
-    }
-
-    void participate_in_round4(std::string request_id, BICYCL::QFI partial_decryptions[], size_t offset, ThreadPool *pool)
-    {
-        // get round 3 data
-        std::cout << "User group retrieves round 3 data from ACC.\n";
-        std::tuple<std::string, BICYCL::CL_HSMqk::CipherText> round3_data = acc->get_round3_data(request_id);
-
-        std::cout << "Users in the user group compute round 4 data parallelly.\n";
-        size_t index = offset;
-        for (User &user : users)
-        {
-            pool->enqueue(&User::compute_r4_data, &user, pp, std::get<1>(round3_data), std::ref(partial_decryptions[index]));
+            pool->enqueue(&User::compute_r3_data, &user, pp, std::get<3>(round2_data), std::ref(w_partial_decryptions[index]));
+            pool->enqueue(&User::compute_r3_data, &user, pp, std::get<4>(round2_data), std::ref(z_partial_decryptions[index]));
             ++index;
         }
     }
@@ -1253,45 +1173,19 @@ int main(int argc, char* argv[])
     // Round 3 data to broadcast - part_dec(enc(p * k))
     std::cout << "Setting up storage for round 3 data...\n";
     BICYCL::QFI w_partial_decryptions[user_group.size() + validator_network.size()];
+    BICYCL::QFI z_partial_decryptions[user_group.size() + validator_network.size()];
 
     std::cout << "User group participates in round 3.\n";
-    user_group.participate_in_round3(ug_req_id, w_partial_decryptions, 0, &pool);
+    user_group.participate_in_round3(ug_req_id, w_partial_decryptions, z_partial_decryptions, 0, &pool);
 
     std::cout << "Validator network participates in round 3 parallelly.\n";
-    validator_network.participate_in_round3(request_ids.at(0), w_partial_decryptions, user_group.size(), &pool);
+    validator_network.participate_in_round3(request_ids.at(0), w_partial_decryptions, z_partial_decryptions, user_group.size(), &pool);
 
     // wait for all threads to finish
     pool.wait();
 
     std::cout << "Round 3 data is broadcasted to ACC.\n";
-    acc.upload_r3_data(ug_req_id, w_partial_decryptions, user_group.size() + validator_network.size(), &pool);
-
-    stop = std::chrono::high_resolution_clock::now();
-    duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
-
-    std::cout << "===========================================================================================================================================================\n";
-    std::cout << "Time taken in Round - 3: " << duration.count() << " milliseconds" << std::endl;
-    std::cout << "===========================================================================================================================================================\n";
-
-    std::cout << "Round - 4\n";
-    std::cout << "===========================================================================================================================================================\n";
-    start = std::chrono::high_resolution_clock::now();
-
-    // Round 4 data to broadcast - part_dec(enc_s)
-    std::cout << "Setting up storage for round 4 data...\n";
-    BICYCL::QFI s_partial_decryptions[user_group.size() + validator_network.size()];
-
-    std::cout << "User group participates in round 4.\n";
-    user_group.participate_in_round4(ug_req_id, s_partial_decryptions, 0, &pool);
-
-    std::cout << "Validator network participates in round 4 parallelly.\n";
-    validator_network.participate_in_round4(request_ids.at(0), s_partial_decryptions, user_group.size(), &pool);
-
-    // wait for all threads to finish
-    pool.wait();
-
-    std::cout << "Round 4 data is broadcasted to ACC.\n";
-    acc.upload_r4_data(ug_req_id, s_partial_decryptions, user_group.size() + validator_network.size());
+    acc.upload_r3_data(ug_req_id, w_partial_decryptions, z_partial_decryptions, user_group.size() + validator_network.size(), &pool);
 
     stop = std::chrono::high_resolution_clock::now();
     duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
@@ -1299,7 +1193,7 @@ int main(int argc, char* argv[])
     std::cout << "Signature Generated." << std::endl;
 
     std::cout << "===========================================================================================================================================================\n";
-    std::cout << "Time taken in Round - 4: " << duration.count() << " milliseconds" << std::endl;
+    std::cout << "Time taken in Round - 3: " << duration.count() << " milliseconds" << std::endl;
     std::cout << "===========================================================================================================================================================\n";
 
     auto sig_gen_stop = std::chrono::high_resolution_clock::now();
@@ -1308,7 +1202,7 @@ int main(int argc, char* argv[])
     std::cout << "===========================================================================================================================================================\n";
 
     auto r1_data = acc.get_round1_data(ug_req_id);
-    auto r4_data = acc.get_round4_data(ug_req_id);
+    auto r4_data = acc.get_round3_data(ug_req_id);
 
     uint8_t sig_bytes[64];
 
