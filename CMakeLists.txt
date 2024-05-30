@@ -8,7 +8,7 @@ add_subdirectory("include/bicycl" EXCLUDE_FROM_ALL)
 add_custom_target(poc COMMAND ${CMAKE_COMMAND} -E sleep 0)
 
 # Add the executable for cychain_sig_gen
-add_executable(cychain_sig_gen src/cychain_sig_gen.cpp src/ThreadPool.cpp src/CryptoUtils.cpp)
+add_executable(cychain_sig_gen src/ThreadPool.cpp src/CryptoUtils.cpp src/cychain_sig_gen.cpp)
 
 # Include directories
 include_directories(include/trezor-firmware/crypto)

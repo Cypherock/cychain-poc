@@ -17,9 +17,11 @@
 #include <atomic>
 #include <future>
 
-#include "bicycl.hpp"
 #include "ThreadPool.h"
 #include "CryptoUtils.h"
+#include "PolicyContract.h"
+
+#include "bicycl.hpp"
 
 extern "C"
 {
@@ -30,18 +32,6 @@ extern "C"
 }
 
 using std::string;
-
-class PolicyContract
-{
-public:
-    virtual ~PolicyContract() {}
-
-    // Pure virtual function that must be implemented by any concrete class deriving from this interface
-    virtual bool check_compliance(uint32_t threshold, std::string message_hash_hex_str) = 0;
-
-    // There will be a get_thresholds methods in the future, to implement dynamic threshold.
-    // It has been ommitted for simplicity and because of the absence of finalised DKG.
-};
 
 class GroupsPolicyContract : public PolicyContract
 {
