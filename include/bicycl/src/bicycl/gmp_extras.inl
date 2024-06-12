@@ -947,6 +947,13 @@ void Mpz::mod_inverse_2k (Mpz &r, const Mpz &op1, mp_bitcnt_t k, Mpz &t)
 
 /* */
 inline
+void Mpz::pow_ui (Mpz &r, const Mpz &b, unsigned long e)
+{
+  mpz_pow_ui (r.mpz_, b.mpz_, e);
+}
+
+/* */
+inline
 void Mpz::pow_mod (Mpz &r, const Mpz &b, const Mpz &e, const Mpz &m)
 {
   mpz_powm (r.mpz_, b.mpz_, e.mpz_, m.mpz_);

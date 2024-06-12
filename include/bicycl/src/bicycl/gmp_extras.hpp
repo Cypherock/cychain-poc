@@ -202,6 +202,7 @@ namespace BICYCL
       static void mod_inverse (Mpz &, const Mpz &, const Mpz &);
       static void mod_inverse_2k (Mpz &, const Mpz &, mp_bitcnt_t k);
       static void mod_inverse_2k (Mpz &, const Mpz &, mp_bitcnt_t k, Mpz &);
+      static void pow_ui (Mpz &, const Mpz &, unsigned long);
       static void pow_mod (Mpz &, const Mpz &, const Mpz &, const Mpz &);
       static void pow_mod (Mpz &, const Mpz &, const Mpz &, const Mpz &,
                            size_t, const Mpz &, const Mpz &, const Mpz &);
