@@ -34,7 +34,7 @@ using std::string;
 
 class IntegerPolynomial {
 private:
-    unsigned int t; // degree of the polynomial
+    unsigned int t; // number of shares required to reconstruct the secret
     unsigned int n;
     std::vector<BICYCL::Mpz> coefficients;
 
@@ -52,7 +52,7 @@ private:
     }
 
     void generateCoefficients(const BICYCL::Mpz &exponent_bound, const BICYCL::Mpz &secret, BICYCL::RandGen &randgen) {
-        coefficients.resize(t + 1);
+        coefficients.resize(t);
         BICYCL::Mpz factorial_n = factorial(n);
 
         BICYCL::Mpz::mul(factorial_n, factorial_n, secret);
@@ -67,7 +67,7 @@ private:
         BICYCL::Mpz::mul(coeff_bound, coeff_bound, n_to_n);
         BICYCL::Mpz::mulby2k(coeff_bound, coeff_bound, 42);
 
-        for (unsigned int i = 1; i <= t; ++i) {
+        for (unsigned int i = 1; i < t; ++i) {
             coefficients[i] = randgen.random_mpz(coeff_bound);
         }
     }
@@ -88,8 +88,8 @@ public:
     // Constructor that takes t, n, and a vector of coefficients
     IntegerPolynomial(unsigned int t, unsigned int n, const std::vector<BICYCL::Mpz> &coefficients)
         : t(t), n(n), coefficients(coefficients) {
-        if (coefficients.size() != t + 1) {
-            throw std::invalid_argument("The number of coefficients must be t + 1");
+        if (coefficients.size() != t) {
+            throw std::invalid_argument("The number of coefficients must be t");
         }
     }
 
@@ -100,10 +100,10 @@ public:
         
     // Method to evaluate the polynomial at a given x value
     BICYCL::Mpz evaluate(const unsigned long x) const {
-        BICYCL::Mpz result = coefficients[t];
+        BICYCL::Mpz result = coefficients[t-1];
         BICYCL::Mpz temp;
 
-        for (int i = t - 1; i >= 0; --i) {
+        for (int i = t - 2; i >= 0; --i) {
             BICYCL::Mpz::mul(temp, result, x); // temp = result * x
             BICYCL::Mpz::add(result, temp, coefficients[i]); // result = temp + coefficients[i]
         }
@@ -142,8 +142,8 @@ public:
     static BICYCL::Mpz reconstruct(unsigned int t, unsigned int n, 
                                    std::vector<BICYCL::Mpz> shares, 
                                    std::vector<unsigned int> indices) {
-        if (shares.size() < t + 1 || shares.size() != indices.size()) {
-            throw std::invalid_argument("The number of shares must be greater than or equal to t + 1.");
+        if (shares.size() < t || shares.size() > n || shares.size() != indices.size()) {
+            throw std::invalid_argument("The number of shares must be >= t and <= n.");
         }
 
         BICYCL::Mpz result(0UL);
@@ -260,7 +260,7 @@ int main() {
     std::vector<unsigned int> indices;
 
     std::cout << "Generating shares...\n";
-    for (int i = 1; i <= 2001; ++i) {
+    for (int i = 1; i <= 2000; ++i) {
         shares.push_back(ip.evaluate(i));
         indices.push_back(i);
     }
