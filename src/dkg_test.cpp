@@ -32,10 +32,122 @@ extern "C"
 
 using std::string;
 
+class IntegerDualPolynomial {
+private:
+    unsigned int t; // number of shares required to reconstruct the secret
+    unsigned int n;
+    BICYCL::Mpz n_fact;
+    std::vector<BICYCL::Mpz> coefficients;
+
+    // can make this function parallel
+    BICYCL::Mpz factorial(unsigned int n) {
+        BICYCL::Mpz result(1UL);
+        BICYCL::Mpz temp;
+
+        for (unsigned long i = 2; i <= n; ++i) {
+            temp = BICYCL::Mpz (i);
+            BICYCL::Mpz::mul(result, result, temp); 
+        }
+
+        return result;
+    }
+
+    void generateCoefficients(const BICYCL::Mpz &exponent_bound, BICYCL::RandGen &randgen) {
+        coefficients.resize(n-t);
+        BICYCL::Mpz coeff_bound(exponent_bound);
+
+        for (unsigned int i = 0; i < n-t; ++i) {
+            coefficients[i] = randgen.random_mpz(coeff_bound);
+        }
+    }
+public:
+    IntegerDualPolynomial(unsigned int t, unsigned int n, const BICYCL::Mpz &exponent_bound, BICYCL::RandGen &randgen)
+        : t(t), n(n) {
+        
+        n_fact = factorial(n);
+        generateCoefficients(exponent_bound, randgen);
+    }
+
+    IntegerDualPolynomial(unsigned int t, unsigned int n, const std::vector<BICYCL::Mpz> &coefficients)
+        : t(t), n(n), coefficients(coefficients) {
+        if (coefficients.size() != n-t) {
+            throw std::invalid_argument("The number of coefficients must be n-t");
+        }
+
+        n_fact = factorial(n);
+    }
+
+    const std::vector<BICYCL::Mpz> &get_coefficients() const {
+        return coefficients;
+    }
+
+    // Method to evaluate the polynomial at a given x value
+    BICYCL::Mpz evaluate(const unsigned long x, const std::vector<unsigned int> &P) const {
+        BICYCL::Mpz result = coefficients[n-t-1];
+        BICYCL::Mpz temp;
+
+        for (int i = n - t - 2; i >= 0; --i) {
+            BICYCL::Mpz::mul(temp, result, x); // temp = result * x
+            BICYCL::Mpz::add(result, temp, coefficients[i]); // result = temp + coefficients[i]
+        }
+
+        BICYCL::Mpz delta_vi = compute_delta_vi(x, P, n_fact);
+        BICYCL::Mpz::mul(result, result, delta_vi);
+
+        return result;
+    }
+
+    // Static function compute_delta_vi. Ideally, the delta should be computed in the function as n!
+    static BICYCL::Mpz compute_delta_vi(int i, const std::vector<unsigned int> &P, const BICYCL::Mpz &delta) {
+        // Check if i is in P
+        if (std::find(P.begin(), P.end(), i) == P.end()) {
+            throw std::invalid_argument("The integer i is not in the list P");
+        }
+
+        // Initialize denominator_inverse as Mpz
+        BICYCL::Mpz denominator_inverse = delta;
+        BICYCL::Mpz temp;
+
+        // Loop through the list of integers
+        for (const auto &j : P) {
+            if (j != i) {
+                // BICYCL::Mpz::mul(numerator, numerator, j);
+                BICYCL::Mpz i_minus_j ((signed long) i - j);
+                BICYCL::Mpz::divexact(denominator_inverse, denominator_inverse, i_minus_j);
+            }
+        }
+
+        return denominator_inverse;
+    }
+
+    static bool verification(std::vector<BICYCL::Mpz> shares, std::vector<BICYCL::Mpz> duals) {
+        if (shares.size() != duals.size()) {
+            throw std::invalid_argument("The number of shares and duals must be the same.");
+        }
+
+        BICYCL::Mpz result(0UL);
+        BICYCL::Mpz temp;
+
+        for (int i = 0; i < shares.size(); ++i) {
+            BICYCL::Mpz::mul(temp, shares[i], duals[i]);
+            BICYCL::Mpz::add(result, result, temp);
+        }
+
+        if (result == 0UL) {
+            std::cout << "Verification successful.\n";
+            return true;
+        } else {
+            std::cout << "Verification failed.\n";
+            return false;
+        }
+    }
+};
+
 class IntegerPolynomial {
 private:
     unsigned int t; // number of shares required to reconstruct the secret
     unsigned int n;
+    BICYCL::Mpz n_fact;
     std::vector<BICYCL::Mpz> coefficients;
 
     // can make this function parallel
@@ -53,13 +165,13 @@ private:
 
     void generateCoefficients(const BICYCL::Mpz &exponent_bound, const BICYCL::Mpz &secret, BICYCL::RandGen &randgen) {
         coefficients.resize(t);
-        BICYCL::Mpz factorial_n = factorial(n);
+        BICYCL::Mpz factorial_n = n_fact;
 
         BICYCL::Mpz::mul(factorial_n, factorial_n, secret);
         coefficients[0] = factorial_n;
 
         BICYCL::Mpz coeff_bound(exponent_bound);
-        BICYCL::Mpz::mul(coeff_bound, coeff_bound, (unsigned long) 2 * t * t); // doesn't have additional n^n
+        BICYCL::Mpz::mul(coeff_bound, coeff_bound, (unsigned long) 2 * t * t);
 
         BICYCL::Mpz n_to_n((unsigned long) n);
         BICYCL::Mpz::pow_ui(n_to_n, n_to_n, (unsigned long) n);
@@ -75,6 +187,8 @@ public:
     // Constructor that takes t, n, exponent bound, and secret
     IntegerPolynomial(unsigned int t, unsigned int n, const BICYCL::Mpz &exponent_bound, const BICYCL::Mpz &secret, BICYCL::RandGen &randgen)
         : t(t), n(n) {
+        BICYCL::Mpz factorial_n = factorial(n);
+        this->n_fact = factorial_n;
         generateCoefficients(exponent_bound, secret, randgen);
     }
 
@@ -82,6 +196,8 @@ public:
     IntegerPolynomial(unsigned int t, unsigned int n, const BICYCL::Mpz &exponent_bound, BICYCL::RandGen &randgen)
         : t(t), n(n) {
         BICYCL::Mpz secret = randgen.random_mpz(exponent_bound);
+        BICYCL::Mpz factorial_n = factorial(n);
+        this->n_fact = factorial_n;
         generateCoefficients(exponent_bound, secret, randgen);
     }
         
@@ -91,6 +207,10 @@ public:
         if (coefficients.size() != t) {
             throw std::invalid_argument("The number of coefficients must be t");
         }
+        // multiply n_fact with the secret
+        BICYCL::Mpz factorial_n = factorial(n);
+        this->n_fact = factorial_n;
+        BICYCL::Mpz::mul(this->coefficients[0], this->coefficients[0], factorial_n);
     }
 
     // TODO - remove this get coefficients
@@ -118,7 +238,7 @@ public:
             throw std::invalid_argument("The integer i is not in the list P");
         }
 
-        // Initialize numerator as an integer and denominator_inverse as Mpz
+        // Initialize numerator and denominator_inverse as Mpz
         BICYCL::Mpz numerator(1UL);
         BICYCL::Mpz denominator_inverse = delta;
         BICYCL::Mpz temp;
@@ -216,7 +336,10 @@ BICYCL::Mpz from_q_ary(const std::vector<BICYCL::Mpz> &chunks, const BICYCL::Mpz
 int main() {
     size_t k = 1;
     const ecdsa_curve *curve = get_curve_by_name(SECP256K1_NAME)->params;
-    BICYCL::RandGen randgen;
+
+    // set seed as time
+    BICYCL::Mpz seed = BICYCL::Mpz((unsigned long) time(NULL));
+    BICYCL::RandGen randgen(seed);
 
     ThreadPool pool(std::thread::hardware_concurrency());
     std::cout << "Created ThreadPool of size: " << std::thread::hardware_concurrency() << "\n";
@@ -253,22 +376,36 @@ int main() {
     // Print the reconstructed number
     std::cout << "Reconstructed number: " << reconstructed_number << std::endl;
 
+    unsigned int t = 2000;
+    unsigned int n = 3000;
+
     BICYCL::Mpz secret(1232346886UL);
-    IntegerPolynomial ip = IntegerPolynomial(2000, 3000, pp.secretkey_bound(), secret, randgen);
+    IntegerPolynomial ip = IntegerPolynomial(t, n, pp.secretkey_bound(), secret, randgen);
 
     std::vector<BICYCL::Mpz> shares;
     std::vector<unsigned int> indices;
 
     std::cout << "Generating shares...\n";
-    for (int i = 1; i <= 2000; ++i) {
+    for (int i = 1; i <= n; ++i) {
         shares.push_back(ip.evaluate(i));
         indices.push_back(i);
     }
 
     std::cout << "Reconstructing...\n";
-    BICYCL::Mpz reconstructed = IntegerPolynomial::reconstruct(2000, 3000, shares, indices);
 
-    std::cout << "Secret: " << reconstructed << std::endl;
+    BICYCL::Mpz reconstructed = IntegerPolynomial::reconstruct(t, n, shares, indices);
+    std::cout << "Reconstructed secret: " << reconstructed << std::endl;
 
+    std::cout << "Generating dual polynomial...\n";
+    IntegerDualPolynomial idp = IntegerDualPolynomial(t, n, pp.secretkey_bound(), randgen);
+
+    std::cout << "Generating duals...\n";
+    std::vector<BICYCL::Mpz> duals;
+
+    for (int i = 1; i <= n; ++i) {
+        duals.push_back(idp.evaluate(i, indices));
+    }
+
+    std::cout << "Verification: " << IntegerDualPolynomial::verification(shares, duals) << std::endl;
     return 0;
 }
