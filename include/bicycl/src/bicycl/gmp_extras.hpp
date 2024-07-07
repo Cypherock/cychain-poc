@@ -173,6 +173,7 @@ namespace BICYCL
 
       static void from_bytes(Mpz &op1, uint8_t *data, size_t size);
       static void to_bytes(const Mpz &op1, uint8_t *data, size_t size);
+      static int export_bytes(const Mpz &op1, uint8_t *data);
 
       static void sub (Mpz &, const Mpz &, const Mpz &);
       static void sub (Mpz &, const Mpz &, unsigned long op2);

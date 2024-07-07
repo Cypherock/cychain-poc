@@ -761,6 +761,15 @@ void Mpz::to_bytes(const Mpz &op1, uint8_t *data, size_t size)
 
 /* */
 inline
+int Mpz::export_bytes(const Mpz &op1, uint8_t *data)
+{
+  size_t count;
+  mpz_export (data, &count, 1, sizeof(data[0]), 0, 0, op1.mpz_);
+  return count;
+}
+
+/* */
+inline
 void Mpz::sub (Mpz &r, const Mpz &op1, const Mpz &op2)
 {
   mpz_sub (r.mpz_, op1.mpz_, op2.mpz_);

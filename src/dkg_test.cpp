@@ -133,13 +133,7 @@ public:
             BICYCL::Mpz::add(result, result, temp);
         }
 
-        if (result == 0UL) {
-            std::cout << "Verification successful.\n";
-            return true;
-        } else {
-            std::cout << "Verification failed.\n";
-            return false;
-        }
+        return result == 0UL;
     }
 };
 
@@ -333,6 +327,485 @@ BICYCL::Mpz from_q_ary(const std::vector<BICYCL::Mpz> &chunks, const BICYCL::Mpz
     return result;
 }
 
+class ClassGroupCommitmentBuilder {
+public:
+    ClassGroupCommitmentBuilder(const BICYCL::QFI &h, const BICYCL::CL_HSMqk &pp) : h_(h), pp_(pp) {
+        precompute();
+    }
+
+    void compute_commitment(BICYCL::QFI &r, const BICYCL::Mpz &secret, BICYCL::Mpz &random) {
+        BICYCL::QFI base_power;
+        pp_.Cl_G().nupow (base_power, h_, secret, d_, e_, h_e_precomp_, h_d_precomp_, h_de_precomp_);
+
+        BICYCL::QFI random_power;
+        pp_.power_of_h(random_power, random);
+
+        pp_.Cl_G().nucomp(r, base_power, random_power);
+    }
+
+    const BICYCL::QFI &h() const {
+        return h_;
+    }
+
+private:
+    BICYCL::QFI h_;
+    BICYCL::CL_HSMqk pp_;
+    size_t d_;
+    size_t e_;
+    BICYCL::QFI h_de_precomp_;
+    BICYCL::QFI h_d_precomp_;
+    BICYCL::QFI h_e_precomp_;
+
+    void precompute() {
+        d_ = (pp_.encrypt_randomness_bound().nbits() + 1) / 2;
+        e_ = d_ / 2 + 1;
+        h_de_precomp_ = h_;
+
+        for (size_t i = 0; i < d_ + e_; i++) {
+            if (i == e_)
+                h_e_precomp_ = h_de_precomp_;
+            if (i == d_)
+                h_d_precomp_ = h_de_precomp_;
+            pp_.Cl_G().nudupl(h_de_precomp_, h_de_precomp_);
+        }
+    }
+};
+
+void group_element_encryption(BICYCL::QFI &c1, BICYCL::QFI &c2, 
+                              const BICYCL::CL_HSMqk::PublicKey &ek, 
+                              const BICYCL::QFI &message, 
+                              const BICYCL::Mpz &random, 
+                              const BICYCL::CL_HSMqk &pp) {
+    pp.power_of_h(c1, random);
+    ek.exponentiation(pp, c2, random);
+    pp.Cl_Delta().nucomp (c2, c2, message);
+}
+
+void group_element_decryption(BICYCL::QFI &message, 
+                              const BICYCL::QFI &c1, 
+                              const BICYCL::QFI &c2, 
+                              const BICYCL::CL_HSMqk::SecretKey &sk, 
+                              const BICYCL::CL_HSMqk &pp) {
+    pp.Cl_G().nupow (message, c1, sk);
+    pp.Cl_Delta().nucompinv (message, c2, message);
+}
+
+typedef struct BIntZKProofGenerationInput {
+    std::vector<BICYCL::Mpz> x_l;
+    std::vector<BICYCL::Mpz> r_l;
+    BICYCL::Mpz r;
+    BICYCL::Mpz x_dash;
+} BIntZKProofGenerationInput;
+
+typedef struct BIntZKProof {
+    BICYCL::Mpz chal;
+    BICYCL::QFI C;
+    std::vector<BICYCL::QFI> R_l;
+    std::vector<BICYCL::QFI> S_l;
+    BICYCL::QFI R_0;
+    BICYCL::QFI S_0;
+    std::vector<BICYCL::Mpz> z1_l;
+    std::vector<BICYCL::Mpz> z1_l_reduced;
+    std::vector<BICYCL::Mpz> z3_l;
+    BICYCL::Mpz z2;
+    BICYCL::Mpz z4;
+} BIntZKProof;
+
+typedef struct BIntZKProofToProve {
+    BICYCL::CL_HSMqk::PublicKey ek;
+    BICYCL::QFI PC;
+    std::vector<BICYCL::QFI> c_l0;
+    std::vector<BICYCL::QFI> c_l1;
+    BICYCL::QFI c_0;
+    BICYCL::QFI c_1;
+} BIntZKProofToProve;
+
+BICYCL::Mpz generate_fiat_shamir_hash() {
+    BICYCL::Mpz hash;
+    return hash;
+}
+
+
+BIntZKProof generate_BInt_proof(BIntZKProofGenerationInput input, 
+                                BIntZKProofToProve to_prove, 
+                                BICYCL::Mpz &delta,
+                                BICYCL::CL_HSMqk &pp, 
+                                ClassGroupCommitmentBuilder &cgcb,
+                                BICYCL::RandGen &randgen) {
+    BIntZKProof proof;
+
+    std::vector<BICYCL::Mpz> a1_l;
+    std::vector<BICYCL::Mpz> a3_l;
+
+    BICYCL::Mpz rand_int_bound = pp.encrypt_randomness_bound();
+    BICYCL::Mpz::mulby2k(rand_int_bound, rand_int_bound, 128 + 42);
+
+    BICYCL::Mpz a2 = randgen.random_mpz(rand_int_bound);
+    BICYCL::Mpz a4 = randgen.random_mpz(rand_int_bound);
+
+    for (size_t i = 0; i < to_prove.c_l0.size(); ++i) {
+        a1_l.push_back(randgen.random_mpz(pp.q()));
+        a3_l.push_back(randgen.random_mpz(rand_int_bound));
+    }
+
+    BICYCL::Mpz a1 = from_q_ary(a1_l, pp.q());
+    cgcb.compute_commitment(proof.C, a1, a2);
+
+    for (size_t i = 0; i < to_prove.c_l0.size(); ++i) {
+        BICYCL::CL_HSMqk::CipherText ct = pp.encrypt(to_prove.ek, 
+                                                     BICYCL::CL_HSMqk::ClearText(pp, a1_l[i]), 
+                                                     a3_l[i]);
+        proof.R_l.push_back(ct.c1());
+        proof.S_l.push_back(ct.c2());
+    }
+
+    BICYCL::Mpz delta_a1 = a1;
+    BICYCL::Mpz::mul(delta_a1, delta_a1, delta);
+    BICYCL::QFI h_to_pow_of_delta_a1;
+    pp.power_of_h(h_to_pow_of_delta_a1, delta_a1);
+
+    group_element_encryption(proof.R_0, proof.S_0, to_prove.ek, h_to_pow_of_delta_a1, a4, pp);
+
+    BICYCL::Mpz chal(123UL);
+    proof.chal = chal;
+
+    for (size_t i = 0; i < to_prove.c_l0.size(); ++i) {
+        BICYCL::Mpz z1_l, z3_l;
+
+        BICYCL::Mpz::mul(z1_l, chal, input.x_l[i]);
+        BICYCL::Mpz::add(z1_l, z1_l, a1_l[i]);
+        proof.z1_l.push_back(z1_l);
+
+        BICYCL::Mpz::mod(z1_l, z1_l, pp.q());
+
+        BICYCL::Mpz::mul(z3_l, chal, input.r_l[i]);
+        BICYCL::Mpz::add(z3_l, z3_l, a3_l[i]);
+
+        proof.z1_l_reduced.push_back(z1_l);
+        proof.z3_l.push_back(z3_l);
+    }
+
+    BICYCL::Mpz::mul(proof.z2, chal, input.x_dash);
+    BICYCL::Mpz::add(proof.z2, proof.z2, a2);
+
+    BICYCL::Mpz::mul(proof.z4, chal, input.r);
+    BICYCL::Mpz::add(proof.z4, proof.z4, a4);
+
+    return proof;
+}
+
+bool verify_BInt_proof(BIntZKProof proof,
+                       BIntZKProofToProve to_prove,
+                       BICYCL::Mpz delta,
+                       BICYCL::CL_HSMqk &pp,
+                       ClassGroupCommitmentBuilder &cgcb) {
+    BICYCL::Mpz chal(123UL);
+
+    if (proof.chal != chal) {
+        return false;
+    }
+
+    BICYCL::Mpz check_bound = pp.encrypt_randomness_bound();
+    BICYCL::Mpz::mulby2k(check_bound, check_bound, 128);
+
+    BICYCL::Mpz temp(1UL);
+    BICYCL::Mpz::mulby2k(temp, temp, 42);
+    BICYCL::Mpz::add(temp, temp, 1UL);
+
+    BICYCL::Mpz::mul(check_bound, check_bound, temp);
+
+    if (proof.z2 < 0UL || proof.z2 > check_bound) {
+        return false;
+    }
+
+    if (proof.z4 < 0UL || proof.z4 > check_bound) {
+        return false;
+    }
+
+    for (size_t i = 0; i < proof.z1_l.size(); ++i) {
+        if (proof.z1_l_reduced.at(i) < 0UL || proof.z1_l_reduced.at(i) >= pp.q()) {
+            return false;
+        }
+
+        if (proof.z3_l.at(i) < 0UL || proof.z3_l.at(i) > check_bound) {
+            return false;
+        }
+
+        BICYCL::Mpz z1_l_reduced;
+        BICYCL::Mpz::mod(z1_l_reduced, proof.z1_l.at(i), pp.q());
+
+        if (z1_l_reduced != proof.z1_l_reduced.at(i)) {
+            return false;
+        }
+
+        BICYCL::CL_HSMqk::CipherText ct = pp.encrypt(to_prove.ek, 
+                                                     BICYCL::CL_HSMqk::ClearText(pp, proof.z1_l_reduced[i]), 
+                                                     proof.z3_l[i]);
+        BICYCL::QFI Rl_times_c_l0_chal = to_prove.c_l0[i];
+        BICYCL::QFI Sl_times_c_l1_chal = to_prove.c_l1[i];
+
+        pp.Cl_G().nupow(Rl_times_c_l0_chal, Rl_times_c_l0_chal, chal);
+        pp.Cl_Delta().nupow(Sl_times_c_l1_chal, Sl_times_c_l1_chal, chal);
+
+        pp.Cl_G().nucomp(Rl_times_c_l0_chal, Rl_times_c_l0_chal, proof.R_l[i]);
+        pp.Cl_Delta().nucomp(Sl_times_c_l1_chal, Sl_times_c_l1_chal, proof.S_l[i]);
+
+        if (!(Rl_times_c_l0_chal == ct.c1()) || !(Sl_times_c_l1_chal == ct.c2())) {
+            return false;
+        }
+    }
+
+    BICYCL::Mpz z1 = from_q_ary(proof.z1_l, pp.q()); 
+    BICYCL::Mpz delta_z1 = z1;
+    BICYCL::Mpz::mul(delta_z1, delta_z1, delta);
+    BICYCL::QFI h_to_pow_of_delta_z1;
+    pp.power_of_h(h_to_pow_of_delta_z1, delta_z1);
+
+    BICYCL::QFI R_0_times_c_0_chal = to_prove.c_0;
+    BICYCL::QFI S_0_times_c_1_chal = to_prove.c_1;
+
+    BICYCL::QFI lhs_c0;
+    BICYCL::QFI lhs_c1;
+
+    group_element_encryption(lhs_c0, lhs_c1, to_prove.ek, h_to_pow_of_delta_z1, proof.z4, pp);
+
+    pp.Cl_G().nupow(R_0_times_c_0_chal, R_0_times_c_0_chal, chal);
+    pp.Cl_Delta().nupow(S_0_times_c_1_chal, S_0_times_c_1_chal, chal);
+
+    pp.Cl_G().nucomp(R_0_times_c_0_chal, R_0_times_c_0_chal, proof.R_0);
+    pp.Cl_Delta().nucomp(S_0_times_c_1_chal, S_0_times_c_1_chal, proof.S_0);
+
+    if (!(R_0_times_c_0_chal == lhs_c0) || !(S_0_times_c_1_chal == lhs_c1)) {
+        return false;
+    }
+
+    BICYCL::QFI lhs_pc;
+    cgcb.compute_commitment(lhs_pc, z1, proof.z2);
+
+    BICYCL::QFI C_times_PC_chal = to_prove.PC;
+    pp.Cl_G().nupow(C_times_PC_chal, C_times_PC_chal, chal);
+    pp.Cl_G().nucomp(C_times_PC_chal, C_times_PC_chal, proof.C);
+
+    if (!(C_times_PC_chal == lhs_pc)) {
+        return false;
+    }
+
+    return true;
+}
+
+void unit_test_BIntZK(BICYCL::CL_HSMqk &pp, BICYCL::RandGen &randgen) {
+    unsigned int n = 1000;
+
+    BICYCL::Mpz X = randgen.random_mpz(pp.encrypt_randomness_bound());
+    BICYCL::Mpz X_dash = randgen.random_mpz(pp.encrypt_randomness_bound());
+
+    BICYCL::QFI h;
+    pp.power_of_h(h, randgen.random_mpz(pp.encrypt_randomness_bound()));
+
+    ClassGroupCommitmentBuilder cgcb(h, pp);
+    BICYCL::QFI PC;
+
+    cgcb.compute_commitment(PC, X, X_dash);
+
+    BICYCL::Mpz delta = factorial(n);
+    BICYCL::Mpz delta_times_X = delta;
+    BICYCL::Mpz::mul(delta_times_X, delta_times_X, X);
+
+    BICYCL::QFI h_to_pow_of_delta_X;
+    pp.power_of_h(h_to_pow_of_delta_X, delta_times_X);
+
+    BICYCL::CL_HSMqk::SecretKey sk = pp.keygen(randgen);
+    BICYCL::CL_HSMqk::PublicKey ek = pp.keygen(sk);
+
+    BICYCL::QFI c0, c1;
+    BICYCL::Mpz r = randgen.random_mpz(pp.encrypt_randomness_bound());
+    group_element_encryption(c0, c1, ek, h_to_pow_of_delta_X, r, pp);
+
+    std::vector<BICYCL::Mpz> x_l = to_q_ary(X, pp.q());
+    std::vector<BICYCL::Mpz> r_l;
+
+    std::vector<BICYCL::QFI> c_l0;
+    std::vector<BICYCL::QFI> c_l1;
+
+    for (size_t i = 0; i < x_l.size(); ++i) {
+        r_l.push_back(randgen.random_mpz(pp.encrypt_randomness_bound()));
+        BICYCL::CL_HSMqk::CipherText ct = pp.encrypt(ek, BICYCL::CL_HSMqk::ClearText(pp, x_l[i]), r_l[i]);
+
+        c_l0.push_back(ct.c1());
+        c_l1.push_back(ct.c2());
+    }
+        
+    BIntZKProofGenerationInput input {x_l, r_l, r, X_dash};
+    BIntZKProofToProve to_prove {ek, PC, c_l0, c_l1, c0, c1};
+
+    BIntZKProof proof = generate_BInt_proof(input, to_prove, delta, pp, cgcb, randgen);
+
+    bool result = verify_BInt_proof(proof, to_prove, delta, pp, cgcb);
+
+    if (result == true) {
+        std::cout << "BInt ZKProof verification successful.\n";
+    } else {
+        std::cout << "BInt ZKProof verification failed.\n";
+    }
+}
+
+typedef struct GDecCLZKProofGenerationInput {
+    BICYCL::CL_HSMqk::SecretKey dk;
+    BICYCL::Mpz x;
+} GDecCLZKProofGenerationInput;
+
+typedef struct GDecCLZKProof {
+    BICYCL::Mpz chal;
+    BICYCL::QFI C;
+    BICYCL::QFI R;
+    BICYCL::QFI S;
+    BICYCL::Mpz z1;
+    BICYCL::Mpz z2;
+} GDecCLZKProof;
+
+typedef struct GDecCLZKProofToProve {
+    BICYCL::QFI X;
+    BICYCL::QFI c_0;
+    BICYCL::QFI c_1;
+    BICYCL::CL_HSMqk::PublicKey ek;
+} GDecCLZKProofToProve;
+
+GDecCLZKProof generate_GDecCL_proof(GDecCLZKProofGenerationInput input,
+                                    GDecCLZKProofToProve to_prove,
+                                    BICYCL::Mpz &delta,
+                                    BICYCL::CL_HSMqk &pp,
+                                    BICYCL::RandGen &randgen) {
+    GDecCLZKProof proof;
+
+    BICYCL::Mpz rand_int_bound = pp.encrypt_randomness_bound();
+    BICYCL::Mpz::mulby2k(rand_int_bound, rand_int_bound, 128 + 42);
+
+    BICYCL::Mpz a1 = randgen.random_mpz(rand_int_bound);
+    BICYCL::Mpz a2 = randgen.random_mpz(rand_int_bound);
+
+    BICYCL::Mpz a2_times_delta = a2;
+    BICYCL::Mpz::mul(a2_times_delta, a2_times_delta, delta);
+
+    pp.power_of_h(proof.C, a2_times_delta);
+    pp.power_of_h(proof.R, a1);
+
+    proof.S = to_prove.c_0;
+    pp.Cl_G().nupow(proof.S, proof.S, a1);
+    pp.Cl_Delta().nucomp(proof.S, proof.S, proof.C);
+
+    BICYCL::Mpz chal(123UL);
+    proof.chal = chal;
+
+    proof.z1 = input.dk;
+    BICYCL::Mpz::mul(proof.z1, proof.z1, chal);
+    BICYCL::Mpz::add(proof.z1, proof.z1, a1);
+
+    proof.z2 = input.x;
+    BICYCL::Mpz::mul(proof.z2, proof.z2, chal);
+    BICYCL::Mpz::add(proof.z2, proof.z2, a2);
+
+    return proof;
+}
+
+bool verify_GDecCL_proof(GDecCLZKProof proof,
+                         GDecCLZKProofToProve to_prove,
+                         BICYCL::Mpz &delta,
+                         BICYCL::CL_HSMqk &pp) {
+    BICYCL::Mpz chal(123UL);
+
+    if (proof.chal != chal) {
+        return false;
+    }
+
+    BICYCL::Mpz check_bound = pp.encrypt_randomness_bound();
+    BICYCL::Mpz::mulby2k(check_bound, check_bound, 128);
+
+    BICYCL::Mpz temp(1UL);
+    BICYCL::Mpz::mulby2k(temp, temp, 42);
+    BICYCL::Mpz::add(temp, temp, 1UL);
+
+    BICYCL::Mpz::mul(check_bound, check_bound, temp);
+
+    if (proof.z1 < 0UL || proof.z1 > check_bound) {
+        return false;
+    }
+
+    if (proof.z2 < 0UL || proof.z2 > check_bound) {
+        return false;
+    }
+
+    BICYCL::QFI C_times_X_chal = to_prove.X;
+    pp.Cl_G().nupow(C_times_X_chal, C_times_X_chal, chal);
+    pp.Cl_G().nucomp(C_times_X_chal, C_times_X_chal, proof.C);
+
+    BICYCL::QFI S_times_c1_chal = to_prove.c_1;
+    pp.Cl_Delta().nupow(S_times_c1_chal, S_times_c1_chal, chal);
+    pp.Cl_Delta().nucomp(S_times_c1_chal, S_times_c1_chal, proof.S);
+
+    BICYCL::QFI R_times_ek_chal;
+    to_prove.ek.exponentiation(pp, R_times_ek_chal, chal);
+    pp.Cl_G().nucomp(R_times_ek_chal, R_times_ek_chal, proof.R);
+
+    BICYCL::Mpz delta_z2 = proof.z2;
+    BICYCL::Mpz::mul(delta_z2, delta_z2, delta);
+
+    BICYCL::QFI h_to_pow_of_delta_z2;
+    pp.power_of_h(h_to_pow_of_delta_z2, delta_z2);
+
+    if (!(h_to_pow_of_delta_z2 == C_times_X_chal)) {
+        return false;
+    }
+
+    BICYCL::QFI h_delta_z2_times_c0_z1 = to_prove.c_0;
+    pp.Cl_G().nupow(h_delta_z2_times_c0_z1, h_delta_z2_times_c0_z1, proof.z1);
+    pp.Cl_G().nucomp(h_delta_z2_times_c0_z1, h_delta_z2_times_c0_z1, h_to_pow_of_delta_z2);
+
+    if (!(h_delta_z2_times_c0_z1 == S_times_c1_chal)) {
+        return false;
+    }
+
+    BICYCL::QFI h_to_pow_of_z1;
+    pp.power_of_h(h_to_pow_of_z1, proof.z1);
+
+    if (!(h_to_pow_of_z1 == R_times_ek_chal)) {
+        return false;
+    }
+
+    return true;
+}
+
+void unit_test_GDecCLZK(BICYCL::CL_HSMqk &pp, BICYCL::RandGen &randgen) {
+    unsigned int n = 1000;
+    BICYCL::Mpz x = randgen.random_mpz(pp.encrypt_randomness_bound());
+
+    BICYCL::Mpz delta = factorial(n);
+    BICYCL::Mpz delta_times_x = delta;
+    BICYCL::Mpz::mul(delta_times_x, delta_times_x, x);
+
+    BICYCL::QFI h_to_pow_of_delta_x;
+    pp.power_of_h(h_to_pow_of_delta_x, delta_times_x);
+
+    BICYCL::CL_HSMqk::SecretKey sk = pp.keygen(randgen);
+    BICYCL::CL_HSMqk::PublicKey ek = pp.keygen(sk);
+
+    BICYCL::QFI c0, c1;
+    BICYCL::Mpz r = randgen.random_mpz(pp.encrypt_randomness_bound());
+    group_element_encryption(c0, c1, ek, h_to_pow_of_delta_x, r, pp);
+
+    GDecCLZKProofGenerationInput input {sk, x};
+    GDecCLZKProofToProve to_prove {h_to_pow_of_delta_x, c0, c1, ek};
+
+    GDecCLZKProof proof = generate_GDecCL_proof(input, to_prove, delta, pp, randgen);
+
+    bool result = verify_GDecCL_proof(proof, to_prove, delta, pp);
+
+    if (result == true) {
+        std::cout << "GDec-Cl ZKProof verification successful.\n";
+    } else {
+        std::cout << "GDec-CL ZKProof verification failed.\n";
+    }
+}
+
 int main() {
     size_t k = 1;
     const ecdsa_curve *curve = get_curve_by_name(SECP256K1_NAME)->params;
@@ -376,8 +849,8 @@ int main() {
     // Print the reconstructed number
     std::cout << "Reconstructed number: " << reconstructed_number << std::endl;
 
-    unsigned int t = 2000;
-    unsigned int n = 3000;
+    unsigned int t = 20;
+    unsigned int n = 30;
 
     BICYCL::Mpz secret(1232346886UL);
     IntegerPolynomial ip = IntegerPolynomial(t, n, pp.secretkey_bound(), secret, randgen);
@@ -407,5 +880,44 @@ int main() {
     }
 
     std::cout << "Verification: " << IntegerDualPolynomial::verification(shares, duals) << std::endl;
+
+    BICYCL::QFI h3; 
+    pp.power_of_h(h3, randgen.random_mpz(pp.encrypt_randomness_bound()));
+
+    BICYCL::CL_HSMqk::SecretKey sk = pp.keygen(randgen);
+    BICYCL::CL_HSMqk::PublicKey pk = pp.keygen(sk);
+
+    BICYCL::QFI c1, c2;
+    group_element_encryption(c1, c2, pk, h3, randgen.random_mpz(pp.encrypt_randomness_bound()), pp);
+
+    BICYCL::QFI message;
+    group_element_decryption(message, c1, c2, sk, pp);
+
+    // check if decrypted message is equal to h3
+    if (message == h3) {
+        std::cout << "Decryption successful.\n";
+    } else {
+        std::cout << "Decryption failed.\n";
+    }
+
+    BICYCL::Mpz random = randgen.random_mpz(pp.encrypt_randomness_bound());
+
+    BICYCL::QFI commitment1;
+    BICYCL::QFI commitment2;
+
+    ClassGroupCommitmentBuilder cgc(h3, pp);
+    cgc.compute_commitment(commitment1, secret, random);
+    cgc.compute_commitment(commitment2, secret, random);
+
+    // check if they are equal
+    if (commitment1 == commitment2) {
+        std::cout << "Commitments are equal.\n";
+    } else {
+        std::cout << "Commitments are not equal.\n";
+    }
+
+    unit_test_BIntZK(pp, randgen);
+    unit_test_GDecCLZK(pp, randgen);
+
     return 0;
 }
