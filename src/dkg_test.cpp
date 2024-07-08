@@ -1119,5 +1119,81 @@ int main() {
         }
     }
 
+    std::cout << "Each user adds their shares from other users and reveal public component in Reveal().\n";
+    std::vector<BICYCL::Mpz> decryption_key_shares;
+
+    std::vector< // this list stores round 2 data of all n users
+                std::tuple< // each user has this data
+                           BICYCL::QFI, // Xi_cross
+                           GDecCLZKProof // GDec-CL ZKP
+                          >
+               > users_2nd_round_data;
+
+    for (size_t i = 0; i < n; ++i) {
+        BICYCL::Mpz x_i(0UL);
+        BICYCL::QFI c0_x_cross_i;
+        BICYCL::QFI c1_x_cross_i;
+
+        bool first_time = true;
+
+        for (auto j : indices) {
+            std::vector<BICYCL::Mpz> decrypted_q_ary;
+            std::vector<BICYCL::QFI> c0_values = std::get<1>(users_1st_round_data[j-1][i]);
+            std::vector<BICYCL::QFI> c1_values = std::get<2>(users_1st_round_data[j-1][i]);
+
+            for (size_t k = 0; k < c0_values.size(); ++k) {
+                BICYCL::QFI fm;
+
+                pp.Cl_G().nupow (fm, c0_values[k], users_secret_keys[i]);
+                pp.Cl_Delta().nucompinv (fm, c1_values[k], fm); 
+
+                decrypted_q_ary.push_back(pp.dlog_in_F(fm));
+            }
+
+            if (decrypted_q_ary.size() != c0_values.size()) {
+                throw std::invalid_argument("Decryption of q_ary failed.\n");
+            }
+
+            BICYCL::Mpz x_ji = from_q_ary(decrypted_q_ary, pp.q());
+            BICYCL::Mpz::add(x_i, x_i, x_ji);
+
+            if (first_time) {
+                c0_x_cross_i = std::get<3>(users_1st_round_data[j-1][i]);
+                c1_x_cross_i = std::get<4>(users_1st_round_data[j-1][i]);
+            } else {
+                BICYCL::QFI c0, c1;
+                BICYCL::Mpz r = randgen.random_mpz(pp.encrypt_randomness_bound());
+
+                pp.power_of_h(c0, r);
+                users_public_keys[i].exponentiation(pp, c1, r);
+
+                pp.Cl_G().nucomp(c0, c0, std::get<3>(users_1st_round_data[j-1][i]));
+                pp.Cl_G().nucomp(c0, c0, c0_x_cross_i);
+
+                pp.Cl_Delta().nucomp(c1, c1, std::get<4>(users_1st_round_data[j-1][i]));
+                pp.Cl_Delta().nucomp(c1, c1, c1_x_cross_i);
+
+                c0_x_cross_i = c0;
+                c1_x_cross_i = c1;
+            }
+
+            first_time = false;
+        }
+    
+        decryption_key_shares.push_back(x_i);
+        BICYCL::Mpz delta_times_x_i = delta;
+        BICYCL::Mpz::mul(delta_times_x_i, delta_times_x_i, x_i);
+
+        BICYCL::QFI Xi_cross;
+        pp.power_of_h(Xi_cross, delta_times_x_i);
+
+        GDecCLZKProofGenerationInput input = {users_secret_keys[i], x_i};
+        GDecCLZKProofToProve to_prove = {Xi_cross, c0_x_cross_i, c1_x_cross_i, users_public_keys[i]};
+
+        GDecCLZKProof proof = generate_GDecCL_proof(input, to_prove, delta, pp, randgen);
+
+        users_2nd_round_data.push_back(std::make_tuple(Xi_cross, proof));
+    }
+
     return 0;
 }
