@@ -347,6 +347,29 @@ public:
 
         return result;
     }
+
+    // static function that reconstructs lifted secret from shares
+    static BICYCL::QFI reconstruct_in_power(unsigned int t, unsigned int n, 
+                                            std::vector<BICYCL::QFI> shares, 
+                                            std::vector<unsigned int> indices,
+                                            BICYCL::CL_HSMqk &pp, 
+                                            BICYCL::Mpz &delta) {
+        if (shares.size() < t || shares.size() > n || shares.size() != indices.size()) {
+            throw std::invalid_argument("The number of shares must be >= t and <= n.");
+        }
+
+        BICYCL::QFI result = pp.Cl_G().one();
+
+        for (int i = 0; i < shares.size(); ++i) {
+            BICYCL::QFI power;
+            BICYCL::Mpz lambda = compute_delta_lambda(indices[i], indices, delta);
+
+            pp.Cl_G().nupow(power, shares[i], lambda);
+            pp.Cl_G().nucomp(result, result, power);
+        }
+
+        return result;
+    }
 };
 
 class ClassGroupCommitmentBuilder {
@@ -1161,11 +1184,8 @@ int main() {
                 c0_x_cross_i = std::get<3>(users_1st_round_data[j-1][i]);
                 c1_x_cross_i = std::get<4>(users_1st_round_data[j-1][i]);
             } else {
-                BICYCL::QFI c0, c1;
-                BICYCL::Mpz r = randgen.random_mpz(pp.encrypt_randomness_bound());
-
-                pp.power_of_h(c0, r);
-                users_public_keys[i].exponentiation(pp, c1, r);
+                BICYCL::QFI c0 = pp.Cl_G().one();
+                BICYCL::QFI c1 = pp.Cl_Delta().one();
 
                 pp.Cl_G().nucomp(c0, c0, std::get<3>(users_1st_round_data[j-1][i]));
                 pp.Cl_G().nucomp(c0, c0, c0_x_cross_i);
@@ -1194,6 +1214,53 @@ int main() {
 
         users_2nd_round_data.push_back(std::make_tuple(Xi_cross, proof));
     }
+
+    std::cout << "Users verify each other's data in RevealVf().\n";
+    for (size_t i = 0; i < n; ++i) {
+        BICYCL::QFI c0_x_cross_i;
+        BICYCL::QFI c1_x_cross_i;
+
+        bool first_time = true;
+
+        for (auto j : indices) {
+            if (first_time) {
+                c0_x_cross_i = std::get<3>(users_1st_round_data[j-1][i]);
+                c1_x_cross_i = std::get<4>(users_1st_round_data[j-1][i]);
+            } else {
+                BICYCL::QFI c0 = pp.Cl_G().one();
+                BICYCL::QFI c1 = pp.Cl_Delta().one();
+
+                pp.Cl_G().nucomp(c0, c0, std::get<3>(users_1st_round_data[j-1][i]));
+                pp.Cl_G().nucomp(c0, c0, c0_x_cross_i);
+
+                pp.Cl_Delta().nucomp(c1, c1, std::get<4>(users_1st_round_data[j-1][i]));
+                pp.Cl_Delta().nucomp(c1, c1, c1_x_cross_i);
+
+                c0_x_cross_i = c0;
+                c1_x_cross_i = c1;
+            }
+
+            first_time = false;
+        }
+
+        GDecCLZKProofToProve to_prove = {std::get<0>(users_2nd_round_data[i]), c0_x_cross_i, c1_x_cross_i, users_public_keys[i]};
+        if (verify_GDecCL_proof(std::get<1>(users_2nd_round_data[i]), to_prove, delta, pp) == false) {
+            // remove i-th user from list of participants.
+            std::cout << "Removed " << i + 1 << "-th user because their ZKPs didn't verify.\n";
+            auto it = std::find(indices.begin(), indices.end(), i + 1); 
+            if (it != indices.end()) { 
+                indices.erase(it); 
+            } 
+        }
+    }
+
+    std::vector<BICYCL::QFI> Xi_cross_values;
+    for (auto i : indices) {
+        Xi_cross_values.push_back(std::get<0>(users_2nd_round_data[i-1]));
+    }
+
+    BICYCL::QFI group_public_key = IntegerPolynomial::reconstruct_in_power(t, n, Xi_cross_values, indices, pp, delta);
+    std::cout << "Group public key created successfully.\n";
 
     return 0;
 }
