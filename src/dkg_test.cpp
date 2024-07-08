@@ -949,6 +949,95 @@ void unit_test_GDecCLZK(BICYCL::CL_HSMqk &pp, BICYCL::RandGen &randgen) {
     }
 }
 
+std::tuple<BICYCL::QFI, BICYCL::QFI> threshold_encryption(BICYCL::QFI &ek, 
+                                                          BICYCL::Mpz &delta, 
+                                                          BICYCL::Mpz &m, 
+                                                          BICYCL::Mpz &r,
+                                                          BICYCL::CL_HSMqk &pp) {
+    BICYCL::Mpz r_times_delta_squared = r;
+    BICYCL::Mpz::mul(r_times_delta_squared, r_times_delta_squared, delta);
+    BICYCL::Mpz::mul(r_times_delta_squared, r_times_delta_squared, delta);
+
+    BICYCL::QFI c0, c1;
+    pp.power_of_h(c0, r_times_delta_squared);
+    pp.Cl_G().nupow(c1, ek, r);
+
+    BICYCL::QFI fm = pp.power_of_f(m);
+    pp.Cl_Delta().nucomp(c1, c1, fm); 
+
+    return std::make_tuple(c0, c1);
+}
+
+BICYCL::QFI partial_decryption(BICYCL::QFI &eki,
+                               std::tuple<BICYCL::QFI, BICYCL::QFI> &ciphertext,
+                               BICYCL::Mpz &dki,
+                               BICYCL::Mpz &delta,
+                               BICYCL::CL_HSMqk &pp) {
+    BICYCL::QFI part_dec;
+    BICYCL::Mpz delta_times_dki = dki;
+    
+    BICYCL::Mpz::mul(delta_times_dki, delta_times_dki, delta);
+    pp.Cl_G().nupow(part_dec, std::get<0>(ciphertext), delta_times_dki);
+
+    return part_dec;
+}
+
+BICYCL::Mpz final_decryption(unsigned int t,
+                             unsigned int n,
+                             BICYCL::QFI &ek,
+                             std::vector<BICYCL::QFI> &eki_values,
+                             std::tuple<BICYCL::QFI, BICYCL::QFI> &ciphertext,
+                             std::vector<BICYCL::QFI> &partial_decryptions,
+                             BICYCL::Mpz &delta,
+                             std::vector<unsigned int> indices,
+                             BICYCL::CL_HSMqk &pp) {
+    BICYCL::QFI M = std::get<1>(ciphertext);
+
+    // store c1^(delta^2) in M
+    pp.Cl_Delta().nupow(M, M, delta);
+    pp.Cl_Delta().nupow(M, M, delta);
+
+    BICYCL::QFI interpolated = IntegerPolynomial::reconstruct_in_power(t, n, partial_decryptions, indices, pp, delta);
+    pp.Cl_Delta().nucompinv(M, M, interpolated);
+    
+    BICYCL::Mpz result = pp.dlog_in_F(M);
+    BICYCL::Mpz::divexact(result, result, delta);
+    BICYCL::Mpz::divexact(result, result, delta);
+    BICYCL::Mpz::mod(result, result, pp.q());
+
+    return result;
+}
+
+void unit_test_threshold_encryption_decryption(unsigned int t,
+                                               unsigned int n,
+                                               BICYCL::CL_HSMqk &pp,
+                                               BICYCL::Mpz &delta,
+                                               BICYCL::QFI &ek,
+                                               std::vector<BICYCL::QFI> eki_values,
+                                               std::vector<BICYCL::Mpz> dec_key_shares,
+                                               BICYCL::RandGen &randgen) {
+    BICYCL::Mpz message(123456789UL);
+    BICYCL::Mpz r = randgen.random_mpz(pp.encrypt_randomness_bound());
+    std::tuple<BICYCL::QFI, BICYCL::QFI> ct = threshold_encryption(ek, delta, message, r, pp);
+
+    // each user in threshold group computes partial decryptions
+    std::vector<BICYCL::QFI> part_decs;
+    std::vector<unsigned int> indices;
+
+    for (size_t i = 0; i < t; ++i) {
+        indices.push_back(i + 1);
+        part_decs.push_back(partial_decryption(eki_values[i], ct, dec_key_shares[i], delta, pp));
+    }
+
+    BICYCL::Mpz decrypted = final_decryption(t, n, ek, eki_values, ct, part_decs, delta, indices, pp);
+
+    if (message == decrypted) {
+        std::cout << "Unit test for threshold encryption and decryption passed.\n";
+    } else {
+        std::cout << "Unit test for threshold encryption and decryption failed.\n";
+    }
+}
+
 int main() {
     size_t k = 1;
     const ecdsa_curve *curve = get_curve_by_name(SECP256K1_NAME)->params;
@@ -1225,6 +1314,13 @@ int main() {
 
     BICYCL::QFI group_public_key = IntegerPolynomial::reconstruct_in_power(t, n, Xi_cross_values, indices, pp, delta);
     std::cout << "Group public key created successfully.\n";
+
+    std::cout << std::endl;
+    unit_test_threshold_encryption_decryption(t, n, pp, delta, 
+                                              group_public_key, 
+                                              Xi_cross_values, 
+                                              decryption_key_shares, 
+                                              randgen);
 
     return 0;
 }
