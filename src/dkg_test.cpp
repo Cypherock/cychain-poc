@@ -1154,10 +1154,8 @@ int main() {
 
     for (size_t i = 0; i < n; ++i) {
         BICYCL::Mpz x_i(0UL);
-        BICYCL::QFI c0_x_cross_i;
-        BICYCL::QFI c1_x_cross_i;
-
-        bool first_time = true;
+        BICYCL::QFI c0_x_cross_i = pp.Cl_G().one();
+        BICYCL::QFI c1_x_cross_i = pp.Cl_Delta().one();
 
         for (auto j : indices) {
             std::vector<BICYCL::Mpz> decrypted_q_ary;
@@ -1180,24 +1178,8 @@ int main() {
             BICYCL::Mpz x_ji = from_q_ary(decrypted_q_ary, pp.q());
             BICYCL::Mpz::add(x_i, x_i, x_ji);
 
-            if (first_time) {
-                c0_x_cross_i = std::get<3>(users_1st_round_data[j-1][i]);
-                c1_x_cross_i = std::get<4>(users_1st_round_data[j-1][i]);
-            } else {
-                BICYCL::QFI c0 = pp.Cl_G().one();
-                BICYCL::QFI c1 = pp.Cl_Delta().one();
-
-                pp.Cl_G().nucomp(c0, c0, std::get<3>(users_1st_round_data[j-1][i]));
-                pp.Cl_G().nucomp(c0, c0, c0_x_cross_i);
-
-                pp.Cl_Delta().nucomp(c1, c1, std::get<4>(users_1st_round_data[j-1][i]));
-                pp.Cl_Delta().nucomp(c1, c1, c1_x_cross_i);
-
-                c0_x_cross_i = c0;
-                c1_x_cross_i = c1;
-            }
-
-            first_time = false;
+            pp.Cl_G().nucomp(c0_x_cross_i, c0_x_cross_i, std::get<3>(users_1st_round_data[j-1][i]));
+            pp.Cl_Delta().nucomp(c1_x_cross_i, c1_x_cross_i, std::get<4>(users_1st_round_data[j-1][i]));
         }
     
         decryption_key_shares.push_back(x_i);
@@ -1217,30 +1199,12 @@ int main() {
 
     std::cout << "Users verify each other's data in RevealVf().\n";
     for (size_t i = 0; i < n; ++i) {
-        BICYCL::QFI c0_x_cross_i;
-        BICYCL::QFI c1_x_cross_i;
-
-        bool first_time = true;
+        BICYCL::QFI c0_x_cross_i = pp.Cl_G().one();
+        BICYCL::QFI c1_x_cross_i = pp.Cl_Delta().one();
 
         for (auto j : indices) {
-            if (first_time) {
-                c0_x_cross_i = std::get<3>(users_1st_round_data[j-1][i]);
-                c1_x_cross_i = std::get<4>(users_1st_round_data[j-1][i]);
-            } else {
-                BICYCL::QFI c0 = pp.Cl_G().one();
-                BICYCL::QFI c1 = pp.Cl_Delta().one();
-
-                pp.Cl_G().nucomp(c0, c0, std::get<3>(users_1st_round_data[j-1][i]));
-                pp.Cl_G().nucomp(c0, c0, c0_x_cross_i);
-
-                pp.Cl_Delta().nucomp(c1, c1, std::get<4>(users_1st_round_data[j-1][i]));
-                pp.Cl_Delta().nucomp(c1, c1, c1_x_cross_i);
-
-                c0_x_cross_i = c0;
-                c1_x_cross_i = c1;
-            }
-
-            first_time = false;
+            pp.Cl_G().nucomp(c0_x_cross_i, c0_x_cross_i, std::get<3>(users_1st_round_data[j-1][i]));
+            pp.Cl_Delta().nucomp(c1_x_cross_i, c1_x_cross_i, std::get<4>(users_1st_round_data[j-1][i]));
         }
 
         GDecCLZKProofToProve to_prove = {std::get<0>(users_2nd_round_data[i]), c0_x_cross_i, c1_x_cross_i, users_public_keys[i]};
