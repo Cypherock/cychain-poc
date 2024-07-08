@@ -32,6 +32,57 @@ extern "C"
 
 using std::string;
 
+typedef struct BIntZKProofGenerationInput {
+    std::vector<BICYCL::Mpz> x_l;
+    std::vector<BICYCL::Mpz> r_l;
+    BICYCL::Mpz r;
+    BICYCL::Mpz x_dash;
+} BIntZKProofGenerationInput;
+
+typedef struct BIntZKProof {
+    BICYCL::Mpz chal;
+    BICYCL::QFI C;
+    std::vector<BICYCL::QFI> R_l;
+    std::vector<BICYCL::QFI> S_l;
+    BICYCL::QFI R_0;
+    BICYCL::QFI S_0;
+    std::vector<BICYCL::Mpz> z1_l;
+    std::vector<BICYCL::Mpz> z1_l_reduced;
+    std::vector<BICYCL::Mpz> z3_l;
+    BICYCL::Mpz z2;
+    BICYCL::Mpz z4;
+} BIntZKProof;
+
+typedef struct BIntZKProofToProve {
+    BICYCL::CL_HSMqk::PublicKey ek;
+    BICYCL::QFI PC;
+    std::vector<BICYCL::QFI> c_l0;
+    std::vector<BICYCL::QFI> c_l1;
+    BICYCL::QFI c_0;
+    BICYCL::QFI c_1;
+} BIntZKProofToProve;
+
+typedef struct GDecCLZKProofGenerationInput {
+    BICYCL::CL_HSMqk::SecretKey dk;
+    BICYCL::Mpz x;
+} GDecCLZKProofGenerationInput;
+
+typedef struct GDecCLZKProof {
+    BICYCL::Mpz chal;
+    BICYCL::QFI C;
+    BICYCL::QFI R;
+    BICYCL::QFI S;
+    BICYCL::Mpz z1;
+    BICYCL::Mpz z2;
+} GDecCLZKProof;
+
+typedef struct GDecCLZKProofToProve {
+    BICYCL::QFI X;
+    BICYCL::QFI c_0;
+    BICYCL::QFI c_1;
+    BICYCL::CL_HSMqk::PublicKey ek;
+} GDecCLZKProofToProve;
+
 class IntegerDualPolynomial {
 private:
     unsigned int t; // number of shares required to reconstruct the secret
@@ -280,6 +331,50 @@ public:
     }
 };
 
+class ClassGroupCommitmentBuilder {
+public:
+    ClassGroupCommitmentBuilder(const BICYCL::QFI &h, const BICYCL::CL_HSMqk &pp) : h_(h), pp_(pp) {
+        precompute();
+    }
+
+    void compute_commitment(BICYCL::QFI &r, const BICYCL::Mpz &secret, BICYCL::Mpz &random) {
+        BICYCL::QFI base_power;
+        pp_.Cl_G().nupow (base_power, h_, secret, d_, e_, h_e_precomp_, h_d_precomp_, h_de_precomp_);
+
+        BICYCL::QFI random_power;
+        pp_.power_of_h(random_power, random);
+
+        pp_.Cl_G().nucomp(r, base_power, random_power);
+    }
+
+    const BICYCL::QFI &h() const {
+        return h_;
+    }
+
+private:
+    BICYCL::QFI h_;
+    BICYCL::CL_HSMqk pp_;
+    size_t d_;
+    size_t e_;
+    BICYCL::QFI h_de_precomp_;
+    BICYCL::QFI h_d_precomp_;
+    BICYCL::QFI h_e_precomp_;
+
+    void precompute() {
+        d_ = (pp_.encrypt_randomness_bound().nbits() + 1) / 2;
+        e_ = d_ / 2 + 1;
+        h_de_precomp_ = h_;
+
+        for (size_t i = 0; i < d_ + e_; i++) {
+            if (i == e_)
+                h_e_precomp_ = h_de_precomp_;
+            if (i == d_)
+                h_d_precomp_ = h_de_precomp_;
+            pp_.Cl_G().nudupl(h_de_precomp_, h_de_precomp_);
+        }
+    }
+};
+
 // can make this function parallel
 BICYCL::Mpz factorial(unsigned int n) {
     BICYCL::Mpz result(1UL);
@@ -327,50 +422,6 @@ BICYCL::Mpz from_q_ary(const std::vector<BICYCL::Mpz> &chunks, const BICYCL::Mpz
     return result;
 }
 
-class ClassGroupCommitmentBuilder {
-public:
-    ClassGroupCommitmentBuilder(const BICYCL::QFI &h, const BICYCL::CL_HSMqk &pp) : h_(h), pp_(pp) {
-        precompute();
-    }
-
-    void compute_commitment(BICYCL::QFI &r, const BICYCL::Mpz &secret, BICYCL::Mpz &random) {
-        BICYCL::QFI base_power;
-        pp_.Cl_G().nupow (base_power, h_, secret, d_, e_, h_e_precomp_, h_d_precomp_, h_de_precomp_);
-
-        BICYCL::QFI random_power;
-        pp_.power_of_h(random_power, random);
-
-        pp_.Cl_G().nucomp(r, base_power, random_power);
-    }
-
-    const BICYCL::QFI &h() const {
-        return h_;
-    }
-
-private:
-    BICYCL::QFI h_;
-    BICYCL::CL_HSMqk pp_;
-    size_t d_;
-    size_t e_;
-    BICYCL::QFI h_de_precomp_;
-    BICYCL::QFI h_d_precomp_;
-    BICYCL::QFI h_e_precomp_;
-
-    void precompute() {
-        d_ = (pp_.encrypt_randomness_bound().nbits() + 1) / 2;
-        e_ = d_ / 2 + 1;
-        h_de_precomp_ = h_;
-
-        for (size_t i = 0; i < d_ + e_; i++) {
-            if (i == e_)
-                h_e_precomp_ = h_de_precomp_;
-            if (i == d_)
-                h_d_precomp_ = h_de_precomp_;
-            pp_.Cl_G().nudupl(h_de_precomp_, h_de_precomp_);
-        }
-    }
-};
-
 void group_element_encryption(BICYCL::QFI &c1, BICYCL::QFI &c2, 
                               const BICYCL::CL_HSMqk::PublicKey &ek, 
                               const BICYCL::QFI &message, 
@@ -390,41 +441,10 @@ void group_element_decryption(BICYCL::QFI &message,
     pp.Cl_Delta().nucompinv (message, c2, message);
 }
 
-typedef struct BIntZKProofGenerationInput {
-    std::vector<BICYCL::Mpz> x_l;
-    std::vector<BICYCL::Mpz> r_l;
-    BICYCL::Mpz r;
-    BICYCL::Mpz x_dash;
-} BIntZKProofGenerationInput;
-
-typedef struct BIntZKProof {
-    BICYCL::Mpz chal;
-    BICYCL::QFI C;
-    std::vector<BICYCL::QFI> R_l;
-    std::vector<BICYCL::QFI> S_l;
-    BICYCL::QFI R_0;
-    BICYCL::QFI S_0;
-    std::vector<BICYCL::Mpz> z1_l;
-    std::vector<BICYCL::Mpz> z1_l_reduced;
-    std::vector<BICYCL::Mpz> z3_l;
-    BICYCL::Mpz z2;
-    BICYCL::Mpz z4;
-} BIntZKProof;
-
-typedef struct BIntZKProofToProve {
-    BICYCL::CL_HSMqk::PublicKey ek;
-    BICYCL::QFI PC;
-    std::vector<BICYCL::QFI> c_l0;
-    std::vector<BICYCL::QFI> c_l1;
-    BICYCL::QFI c_0;
-    BICYCL::QFI c_1;
-} BIntZKProofToProve;
-
-BICYCL::Mpz generate_fiat_shamir_hash() {
+BICYCL::Mpz generate_BInt_fiat_shamir_hash() {
     BICYCL::Mpz hash;
     return hash;
 }
-
 
 BIntZKProof generate_BInt_proof(BIntZKProofGenerationInput input, 
                                 BIntZKProofToProve to_prove, 
@@ -593,82 +613,11 @@ bool verify_BInt_proof(BIntZKProof proof,
     return true;
 }
 
-void unit_test_BIntZK(BICYCL::CL_HSMqk &pp, BICYCL::RandGen &randgen) {
-    unsigned int n = 1000;
-
-    BICYCL::Mpz X = randgen.random_mpz(pp.encrypt_randomness_bound());
-    BICYCL::Mpz X_dash = randgen.random_mpz(pp.encrypt_randomness_bound());
-
-    BICYCL::QFI h;
-    pp.power_of_h(h, randgen.random_mpz(pp.encrypt_randomness_bound()));
-
-    ClassGroupCommitmentBuilder cgcb(h, pp);
-    BICYCL::QFI PC;
-
-    cgcb.compute_commitment(PC, X, X_dash);
-
-    BICYCL::Mpz delta = factorial(n);
-    BICYCL::Mpz delta_times_X = delta;
-    BICYCL::Mpz::mul(delta_times_X, delta_times_X, X);
-
-    BICYCL::QFI h_to_pow_of_delta_X;
-    pp.power_of_h(h_to_pow_of_delta_X, delta_times_X);
-
-    BICYCL::CL_HSMqk::SecretKey sk = pp.keygen(randgen);
-    BICYCL::CL_HSMqk::PublicKey ek = pp.keygen(sk);
-
-    BICYCL::QFI c0, c1;
-    BICYCL::Mpz r = randgen.random_mpz(pp.encrypt_randomness_bound());
-    group_element_encryption(c0, c1, ek, h_to_pow_of_delta_X, r, pp);
-
-    std::vector<BICYCL::Mpz> x_l = to_q_ary(X, pp.q());
-    std::vector<BICYCL::Mpz> r_l;
-
-    std::vector<BICYCL::QFI> c_l0;
-    std::vector<BICYCL::QFI> c_l1;
-
-    for (size_t i = 0; i < x_l.size(); ++i) {
-        r_l.push_back(randgen.random_mpz(pp.encrypt_randomness_bound()));
-        BICYCL::CL_HSMqk::CipherText ct = pp.encrypt(ek, BICYCL::CL_HSMqk::ClearText(pp, x_l[i]), r_l[i]);
-
-        c_l0.push_back(ct.c1());
-        c_l1.push_back(ct.c2());
-    }
-        
-    BIntZKProofGenerationInput input {x_l, r_l, r, X_dash};
-    BIntZKProofToProve to_prove {ek, PC, c_l0, c_l1, c0, c1};
-
-    BIntZKProof proof = generate_BInt_proof(input, to_prove, delta, pp, cgcb, randgen);
-
-    bool result = verify_BInt_proof(proof, to_prove, delta, pp, cgcb);
-
-    if (result == true) {
-        std::cout << "BInt ZKProof verification successful.\n";
-    } else {
-        std::cout << "BInt ZKProof verification failed.\n";
-    }
+BICYCL::Mpz generate_GDecCL_fiat_shamir_hash() {
+    BICYCL::Mpz hash;
+    return hash;
 }
 
-typedef struct GDecCLZKProofGenerationInput {
-    BICYCL::CL_HSMqk::SecretKey dk;
-    BICYCL::Mpz x;
-} GDecCLZKProofGenerationInput;
-
-typedef struct GDecCLZKProof {
-    BICYCL::Mpz chal;
-    BICYCL::QFI C;
-    BICYCL::QFI R;
-    BICYCL::QFI S;
-    BICYCL::Mpz z1;
-    BICYCL::Mpz z2;
-} GDecCLZKProof;
-
-typedef struct GDecCLZKProofToProve {
-    BICYCL::QFI X;
-    BICYCL::QFI c_0;
-    BICYCL::QFI c_1;
-    BICYCL::CL_HSMqk::PublicKey ek;
-} GDecCLZKProofToProve;
 
 GDecCLZKProof generate_GDecCL_proof(GDecCLZKProofGenerationInput input,
                                     GDecCLZKProofToProve to_prove,
@@ -774,6 +723,159 @@ bool verify_GDecCL_proof(GDecCLZKProof proof,
     return true;
 }
 
+void unit_test_q_ary(BICYCL::CL_HSMqk &pp) {
+    BICYCL::Mpz number("1");
+
+    // Divide number into chunks
+    std::vector<BICYCL::Mpz> chunks = to_q_ary(number, pp.q());
+    
+    // Reconstruct the number from chunks
+    BICYCL::Mpz reconstructed_number = from_q_ary(chunks, pp.q());
+
+    if (number == reconstructed_number) {
+        std::cout << "Unit test for q_ary passed.\n";
+    } else {
+        std::cout << "Unit test for q_ary failed.\n";
+    }
+}
+
+void unit_test_shares_and_duals(BICYCL::CL_HSMqk &pp, BICYCL::RandGen &randgen) {
+    unsigned int t = 20;
+    unsigned int n = 30;
+
+    BICYCL::Mpz secret(1232346886UL);
+    IntegerPolynomial ip = IntegerPolynomial(t, n, pp.secretkey_bound(), secret, randgen);
+
+    std::vector<BICYCL::Mpz> shares;
+    std::vector<unsigned int> indices;
+
+    for (int i = 1; i <= n; ++i) {
+        shares.push_back(ip.evaluate(i));
+        indices.push_back(i);
+    }
+
+    BICYCL::Mpz reconstructed = IntegerPolynomial::reconstruct(t, n, shares, indices);
+
+    if (secret == reconstructed) {
+        std::cout << "Unit test for share reconstruction passed.\n";
+    } else {
+        std::cout << "Unit test for share reconstruction failed.\n";
+    }
+
+    IntegerDualPolynomial idp = IntegerDualPolynomial(t, n, pp.secretkey_bound(), randgen);
+
+    std::vector<BICYCL::Mpz> duals;
+
+    for (int i = 1; i <= n; ++i) {
+        duals.push_back(idp.evaluate(i, indices));
+    }
+
+    if (IntegerDualPolynomial::verification(shares, duals) == true) {
+        std::cout << "Unit test for dual verification passed.\n";
+    } else {
+        std::cout << "Unit test for dual verification failed.\n";
+    }
+}
+
+void unit_test_group_element_encryption(BICYCL::CL_HSMqk &pp, BICYCL::RandGen &randgen) {
+    BICYCL::QFI h3; 
+    pp.power_of_h(h3, randgen.random_mpz(pp.encrypt_randomness_bound()));
+
+    BICYCL::CL_HSMqk::SecretKey sk = pp.keygen(randgen);
+    BICYCL::CL_HSMqk::PublicKey pk = pp.keygen(sk);
+
+    BICYCL::QFI c1, c2;
+    group_element_encryption(c1, c2, pk, h3, randgen.random_mpz(pp.encrypt_randomness_bound()), pp);
+
+    BICYCL::QFI message;
+    group_element_decryption(message, c1, c2, sk, pp);
+
+    // check if decrypted message is equal to h3
+    if (message == h3) {
+        std::cout << "Unit test for group element encryption passed.\n";
+    } else {
+        std::cout << "Unit test for group element encryption failed.\n";
+    }
+}
+
+void unit_test_class_group_committment(BICYCL::CL_HSMqk pp, BICYCL::RandGen randgen) {
+    BICYCL::QFI h3; 
+    pp.power_of_h(h3, randgen.random_mpz(pp.encrypt_randomness_bound()));
+
+    BICYCL::Mpz random = randgen.random_mpz(pp.encrypt_randomness_bound());
+
+    BICYCL::QFI commitment1;
+    BICYCL::QFI commitment2;
+
+    BICYCL::Mpz secret(123456UL);
+    ClassGroupCommitmentBuilder cgc(h3, pp);
+    cgc.compute_commitment(commitment1, secret, random);
+    cgc.compute_commitment(commitment2, secret, random);
+
+    // check if they are equal
+    if (commitment1 == commitment2) {
+        std::cout << "Unit test for class group commitment passed.\n";
+    } else {
+        std::cout << "Unit test for class group commitment failed.\n";
+    }
+}
+
+void unit_test_BIntZK(BICYCL::CL_HSMqk &pp, BICYCL::RandGen &randgen) {
+    unsigned int n = 1000;
+
+    BICYCL::Mpz X = randgen.random_mpz(pp.encrypt_randomness_bound());
+    BICYCL::Mpz X_dash = randgen.random_mpz(pp.encrypt_randomness_bound());
+
+    BICYCL::QFI h;
+    pp.power_of_h(h, randgen.random_mpz(pp.encrypt_randomness_bound()));
+
+    ClassGroupCommitmentBuilder cgcb(h, pp);
+    BICYCL::QFI PC;
+
+    cgcb.compute_commitment(PC, X, X_dash);
+
+    BICYCL::Mpz delta = factorial(n);
+    BICYCL::Mpz delta_times_X = delta;
+    BICYCL::Mpz::mul(delta_times_X, delta_times_X, X);
+
+    BICYCL::QFI h_to_pow_of_delta_X;
+    pp.power_of_h(h_to_pow_of_delta_X, delta_times_X);
+
+    BICYCL::CL_HSMqk::SecretKey sk = pp.keygen(randgen);
+    BICYCL::CL_HSMqk::PublicKey ek = pp.keygen(sk);
+
+    BICYCL::QFI c0, c1;
+    BICYCL::Mpz r = randgen.random_mpz(pp.encrypt_randomness_bound());
+    group_element_encryption(c0, c1, ek, h_to_pow_of_delta_X, r, pp);
+
+    std::vector<BICYCL::Mpz> x_l = to_q_ary(X, pp.q());
+    std::vector<BICYCL::Mpz> r_l;
+
+    std::vector<BICYCL::QFI> c_l0;
+    std::vector<BICYCL::QFI> c_l1;
+
+    for (size_t i = 0; i < x_l.size(); ++i) {
+        r_l.push_back(randgen.random_mpz(pp.encrypt_randomness_bound()));
+        BICYCL::CL_HSMqk::CipherText ct = pp.encrypt(ek, BICYCL::CL_HSMqk::ClearText(pp, x_l[i]), r_l[i]);
+
+        c_l0.push_back(ct.c1());
+        c_l1.push_back(ct.c2());
+    }
+        
+    BIntZKProofGenerationInput input {x_l, r_l, r, X_dash};
+    BIntZKProofToProve to_prove {ek, PC, c_l0, c_l1, c0, c1};
+
+    BIntZKProof proof = generate_BInt_proof(input, to_prove, delta, pp, cgcb, randgen);
+
+    bool result = verify_BInt_proof(proof, to_prove, delta, pp, cgcb);
+
+    if (result == true) {
+        std::cout << "Unit test for BInt ZKProof verification passed.\n";
+    } else {
+        std::cout << "Unit test for BInt ZKProof verification failed.\n";
+    }
+}
+
 void unit_test_GDecCLZK(BICYCL::CL_HSMqk &pp, BICYCL::RandGen &randgen) {
     unsigned int n = 1000;
     BICYCL::Mpz x = randgen.random_mpz(pp.encrypt_randomness_bound());
@@ -800,9 +902,9 @@ void unit_test_GDecCLZK(BICYCL::CL_HSMqk &pp, BICYCL::RandGen &randgen) {
     bool result = verify_GDecCL_proof(proof, to_prove, delta, pp);
 
     if (result == true) {
-        std::cout << "GDec-Cl ZKProof verification successful.\n";
+        std::cout << "Unit test for GDec-Cl ZKProof verification passed.\n";
     } else {
-        std::cout << "GDec-CL ZKProof verification failed.\n";
+        std::cout << "Unit test for GDec-Cl ZKProof verification failed.\n";
     }
 }
 
@@ -813,9 +915,6 @@ int main() {
     // set seed as time
     BICYCL::Mpz seed = BICYCL::Mpz((unsigned long) time(NULL));
     BICYCL::RandGen randgen(seed);
-
-    ThreadPool pool(std::thread::hardware_concurrency());
-    std::cout << "Created ThreadPool of size: " << std::thread::hardware_concurrency() << "\n";
 
     // Setting up the the public parameters where message space is the curve order of SECP256K1
     BICYCL::Mpz q(0UL);
@@ -829,93 +928,10 @@ int main() {
     BICYCL::CL_HSMqk pp = BICYCL::CL_HSMqk(q, k, p);
     std::cout << "Class group successfully setup.\n";
 
-    BICYCL::Mpz fact = factorial(5);
-    std::cout << fact << std::endl;
-
-    BICYCL::Mpz number("1");
-
-    // Divide number into chunks
-    std::vector<BICYCL::Mpz> chunks = to_q_ary(number, q);
-    
-    // Print the chunks
-    std::cout << "Chunks:" << std::endl;
-    for (const auto &chunk : chunks) {
-        std::cout << chunk << std::endl;
-    }
-
-    // Reconstruct the number from chunks
-    BICYCL::Mpz reconstructed_number = from_q_ary(chunks, q);
-    
-    // Print the reconstructed number
-    std::cout << "Reconstructed number: " << reconstructed_number << std::endl;
-
-    unsigned int t = 20;
-    unsigned int n = 30;
-
-    BICYCL::Mpz secret(1232346886UL);
-    IntegerPolynomial ip = IntegerPolynomial(t, n, pp.secretkey_bound(), secret, randgen);
-
-    std::vector<BICYCL::Mpz> shares;
-    std::vector<unsigned int> indices;
-
-    std::cout << "Generating shares...\n";
-    for (int i = 1; i <= n; ++i) {
-        shares.push_back(ip.evaluate(i));
-        indices.push_back(i);
-    }
-
-    std::cout << "Reconstructing...\n";
-
-    BICYCL::Mpz reconstructed = IntegerPolynomial::reconstruct(t, n, shares, indices);
-    std::cout << "Reconstructed secret: " << reconstructed << std::endl;
-
-    std::cout << "Generating dual polynomial...\n";
-    IntegerDualPolynomial idp = IntegerDualPolynomial(t, n, pp.secretkey_bound(), randgen);
-
-    std::cout << "Generating duals...\n";
-    std::vector<BICYCL::Mpz> duals;
-
-    for (int i = 1; i <= n; ++i) {
-        duals.push_back(idp.evaluate(i, indices));
-    }
-
-    std::cout << "Verification: " << IntegerDualPolynomial::verification(shares, duals) << std::endl;
-
-    BICYCL::QFI h3; 
-    pp.power_of_h(h3, randgen.random_mpz(pp.encrypt_randomness_bound()));
-
-    BICYCL::CL_HSMqk::SecretKey sk = pp.keygen(randgen);
-    BICYCL::CL_HSMqk::PublicKey pk = pp.keygen(sk);
-
-    BICYCL::QFI c1, c2;
-    group_element_encryption(c1, c2, pk, h3, randgen.random_mpz(pp.encrypt_randomness_bound()), pp);
-
-    BICYCL::QFI message;
-    group_element_decryption(message, c1, c2, sk, pp);
-
-    // check if decrypted message is equal to h3
-    if (message == h3) {
-        std::cout << "Decryption successful.\n";
-    } else {
-        std::cout << "Decryption failed.\n";
-    }
-
-    BICYCL::Mpz random = randgen.random_mpz(pp.encrypt_randomness_bound());
-
-    BICYCL::QFI commitment1;
-    BICYCL::QFI commitment2;
-
-    ClassGroupCommitmentBuilder cgc(h3, pp);
-    cgc.compute_commitment(commitment1, secret, random);
-    cgc.compute_commitment(commitment2, secret, random);
-
-    // check if they are equal
-    if (commitment1 == commitment2) {
-        std::cout << "Commitments are equal.\n";
-    } else {
-        std::cout << "Commitments are not equal.\n";
-    }
-
+    unit_test_q_ary(pp);
+    unit_test_shares_and_duals(pp, randgen);
+    unit_test_group_element_encryption(pp, randgen);
+    unit_test_class_group_committment(pp, randgen);
     unit_test_BIntZK(pp, randgen);
     unit_test_GDecCLZK(pp, randgen);
 
