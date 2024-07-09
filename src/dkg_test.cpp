@@ -83,6 +83,23 @@ typedef struct GDecCLZKProofToProve {
     BICYCL::CL_HSMqk::PublicKey ek;
 } GDecCLZKProofToProve;
 
+typedef struct PartDecZKProofGenerationInput {
+    BICYCL::Mpz dki;
+} PartDecZKProofGenerationInput;
+
+typedef struct PartDecZKProof {
+    BICYCL::Mpz chal;
+    BICYCL::QFI R;
+    BICYCL::QFI S;
+    BICYCL::Mpz z;
+} PartDecZKProof;
+
+typedef struct PartDecZKProofToProve {
+    BICYCL::QFI eki;
+    BICYCL::QFI c_0;
+    BICYCL::QFI cpdi;
+} PartDecZKProofToProve;
+
 class IntegerDualPolynomial {
 private:
     unsigned int t; // number of shares required to reconstruct the secret
@@ -527,7 +544,7 @@ BIntZKProof generate_BInt_proof(BIntZKProofGenerationInput input,
 
     group_element_encryption(proof.R_0, proof.S_0, to_prove.ek, h_to_pow_of_delta_a1, a4, pp);
 
-    BICYCL::Mpz chal(123UL);
+    BICYCL::Mpz chal(123UL); // this should actually be generated through fiat shamir transform
     proof.chal = chal;
 
     for (size_t i = 0; i < to_prove.c_l0.size(); ++i) {
@@ -560,7 +577,7 @@ bool verify_BInt_proof(BIntZKProof proof,
                        BICYCL::Mpz delta,
                        BICYCL::CL_HSMqk &pp,
                        ClassGroupCommitmentBuilder &cgcb) {
-    BICYCL::Mpz chal(123UL);
+    BICYCL::Mpz chal(123UL); // this should actually be generated through fiat shamir transform
 
     if (proof.chal != chal) {
         return false;
@@ -683,7 +700,7 @@ GDecCLZKProof generate_GDecCL_proof(GDecCLZKProofGenerationInput input,
     pp.Cl_G().nupow(proof.S, proof.S, a1);
     pp.Cl_Delta().nucomp(proof.S, proof.S, proof.C);
 
-    BICYCL::Mpz chal(123UL);
+    BICYCL::Mpz chal(123UL); // this should actually be generated through fiat shamir transform
     proof.chal = chal;
 
     proof.z1 = input.dk;
@@ -701,7 +718,7 @@ bool verify_GDecCL_proof(GDecCLZKProof proof,
                          GDecCLZKProofToProve to_prove,
                          BICYCL::Mpz &delta,
                          BICYCL::CL_HSMqk &pp) {
-    BICYCL::Mpz chal(123UL);
+    BICYCL::Mpz chal(123UL); // this should actually be generated through fiat shamir transform
 
     if (proof.chal != chal) {
         return false;
@@ -762,6 +779,162 @@ bool verify_GDecCL_proof(GDecCLZKProof proof,
     }
 
     return true;
+}
+
+PartDecZKProof generate_PartDec_proof(PartDecZKProofGenerationInput input,
+                                      PartDecZKProofToProve to_prove,
+                                      BICYCL::Mpz &delta,
+                                      BICYCL::CL_HSMqk &pp,
+                                      BICYCL::RandGen &randgen) {
+    PartDecZKProof proof;
+
+    BICYCL::Mpz rand_int_bound = pp.encrypt_randomness_bound();
+    BICYCL::Mpz::mulby2k(rand_int_bound, rand_int_bound, 128 + 42);
+
+    BICYCL::Mpz a = randgen.random_mpz(rand_int_bound);
+
+    BICYCL::Mpz a_times_delta = a;
+    BICYCL::Mpz::mul(a_times_delta, a_times_delta, delta);
+
+    pp.power_of_h(proof.R, a_times_delta);
+    pp.Cl_G().nupow(proof.S, to_prove.c_0, a_times_delta);
+
+    BICYCL::Mpz chal(123UL); // this should actually be generated through fiat shamir transform
+    proof.chal = chal;
+
+    proof.z = input.dki;
+    
+    BICYCL::Mpz::mul(proof.z, proof.z, chal);
+    BICYCL::Mpz::add(proof.z, proof.z, a);
+
+    return proof;
+}
+
+bool verify_PartDec_proof(PartDecZKProof proof,
+                          PartDecZKProofToProve to_prove,
+                          BICYCL::Mpz &delta,
+                          BICYCL::CL_HSMqk &pp) {
+    BICYCL::Mpz chal(123UL); // this should actually be generated through fiat shamir transform
+
+    if (proof.chal != chal) {
+        return false;
+    }
+
+    BICYCL::Mpz check_bound = pp.encrypt_randomness_bound();
+    BICYCL::Mpz::mulby2k(check_bound, check_bound, 128);
+
+    BICYCL::Mpz temp(1UL);
+    BICYCL::Mpz::mulby2k(temp, temp, 42);
+    BICYCL::Mpz::add(temp, temp, 1UL);
+
+    BICYCL::Mpz::mul(check_bound, check_bound, temp);
+
+    if (proof.z < 0UL || proof.z > check_bound) {
+        return false;
+    }
+
+    BICYCL::Mpz z_times_delta = proof.z;
+    BICYCL::Mpz::mul(z_times_delta, z_times_delta, delta);
+
+    BICYCL::QFI gq_to_pow_delta_z;
+    pp.power_of_h(gq_to_pow_delta_z, z_times_delta);
+
+    BICYCL::QFI c0_to_pow_delta_z;
+    pp.Cl_G().nupow(c0_to_pow_delta_z, to_prove.c_0, z_times_delta);
+
+    BICYCL::QFI R_times_eki_chal = to_prove.eki;
+    pp.Cl_G().nupow(R_times_eki_chal, R_times_eki_chal, chal);
+    pp.Cl_G().nucomp(R_times_eki_chal, R_times_eki_chal, proof.R);
+
+    BICYCL::QFI S_times_cpdi_chal = to_prove.cpdi;
+    pp.Cl_G().nupow(S_times_cpdi_chal, S_times_cpdi_chal, chal);
+    pp.Cl_G().nucomp(S_times_cpdi_chal, S_times_cpdi_chal, proof.S);
+
+    if (!(gq_to_pow_delta_z == R_times_eki_chal)) {
+        return false;
+    }
+
+    if (!(c0_to_pow_delta_z == S_times_cpdi_chal)) {
+        return false;
+    }
+
+    return true;
+}
+
+std::tuple<BICYCL::QFI, BICYCL::QFI> threshold_encryption(BICYCL::QFI &ek, 
+                                                          BICYCL::Mpz &delta, 
+                                                          BICYCL::Mpz &m, 
+                                                          BICYCL::Mpz &r,
+                                                          BICYCL::CL_HSMqk &pp) {
+    BICYCL::Mpz r_times_delta_squared = r;
+    BICYCL::Mpz::mul(r_times_delta_squared, r_times_delta_squared, delta);
+    BICYCL::Mpz::mul(r_times_delta_squared, r_times_delta_squared, delta);
+
+    BICYCL::QFI c0, c1;
+    pp.power_of_h(c0, r_times_delta_squared);
+    pp.Cl_G().nupow(c1, ek, r);
+
+    BICYCL::QFI fm = pp.power_of_f(m);
+    pp.Cl_Delta().nucomp(c1, c1, fm); 
+
+    return std::make_tuple(c0, c1);
+}
+
+std::tuple<BICYCL::QFI, PartDecZKProof> partial_decryption(BICYCL::QFI &eki,
+                                                           std::tuple<BICYCL::QFI, BICYCL::QFI> &ciphertext,
+                                                           BICYCL::Mpz &dki,
+                                                           BICYCL::Mpz &delta,
+                                                           BICYCL::CL_HSMqk &pp,
+                                                           BICYCL::RandGen &randgen) {
+    BICYCL::QFI part_dec;
+    BICYCL::Mpz delta_times_dki = dki;
+    
+    BICYCL::Mpz::mul(delta_times_dki, delta_times_dki, delta);
+    pp.Cl_G().nupow(part_dec, std::get<0>(ciphertext), delta_times_dki);
+
+    PartDecZKProofGenerationInput input = {dki};
+    PartDecZKProofToProve to_prove = {eki, std::get<0>(ciphertext), part_dec};
+    PartDecZKProof proof = generate_PartDec_proof(input, to_prove, delta, pp, randgen);
+
+    return std::make_tuple(part_dec, proof);
+}
+
+BICYCL::Mpz final_decryption(unsigned int t,
+                             unsigned int n,
+                             BICYCL::QFI &ek,
+                             std::vector<BICYCL::QFI> &eki_values,
+                             std::tuple<BICYCL::QFI, BICYCL::QFI> &ciphertext,
+                             std::vector<std::tuple<BICYCL::QFI, PartDecZKProof>> &partial_decryptions,
+                             BICYCL::Mpz &delta,
+                             std::vector<unsigned int> indices,
+                             BICYCL::CL_HSMqk &pp,
+                             BICYCL::RandGen &randgen) {
+    BICYCL::QFI M = std::get<1>(ciphertext);
+
+    // store c1^(delta^2) in M
+    pp.Cl_Delta().nupow(M, M, delta);
+    pp.Cl_Delta().nupow(M, M, delta);
+
+    std::vector<BICYCL::QFI> part_decs;
+    for (size_t i = 0; i < partial_decryptions.size(); ++i) {
+        PartDecZKProofToProve to_prove = {eki_values[i], std::get<0>(ciphertext), std::get<0>(partial_decryptions[i])};
+
+        if (verify_PartDec_proof(std::get<1>(partial_decryptions[i]), to_prove, delta, pp) == false) {
+            throw std::invalid_argument("Partial Decryption's zero knowledge proof failed to verify.\n");
+        }
+
+        part_decs.push_back(std::get<0>(partial_decryptions[i]));
+    }
+
+    BICYCL::QFI interpolated = IntegerPolynomial::reconstruct_in_power(t, n, part_decs, indices, pp, delta);
+    pp.Cl_Delta().nucompinv(M, M, interpolated);
+    
+    BICYCL::Mpz result = pp.dlog_in_F(M);
+    BICYCL::Mpz::divexact(result, result, delta);
+    BICYCL::Mpz::divexact(result, result, delta);
+    BICYCL::Mpz::mod(result, result, pp.q());
+
+    return result;
 }
 
 void unit_test_q_ary(BICYCL::CL_HSMqk &pp) {
@@ -949,65 +1122,6 @@ void unit_test_GDecCLZK(BICYCL::CL_HSMqk &pp, BICYCL::RandGen &randgen) {
     }
 }
 
-std::tuple<BICYCL::QFI, BICYCL::QFI> threshold_encryption(BICYCL::QFI &ek, 
-                                                          BICYCL::Mpz &delta, 
-                                                          BICYCL::Mpz &m, 
-                                                          BICYCL::Mpz &r,
-                                                          BICYCL::CL_HSMqk &pp) {
-    BICYCL::Mpz r_times_delta_squared = r;
-    BICYCL::Mpz::mul(r_times_delta_squared, r_times_delta_squared, delta);
-    BICYCL::Mpz::mul(r_times_delta_squared, r_times_delta_squared, delta);
-
-    BICYCL::QFI c0, c1;
-    pp.power_of_h(c0, r_times_delta_squared);
-    pp.Cl_G().nupow(c1, ek, r);
-
-    BICYCL::QFI fm = pp.power_of_f(m);
-    pp.Cl_Delta().nucomp(c1, c1, fm); 
-
-    return std::make_tuple(c0, c1);
-}
-
-BICYCL::QFI partial_decryption(BICYCL::QFI &eki,
-                               std::tuple<BICYCL::QFI, BICYCL::QFI> &ciphertext,
-                               BICYCL::Mpz &dki,
-                               BICYCL::Mpz &delta,
-                               BICYCL::CL_HSMqk &pp) {
-    BICYCL::QFI part_dec;
-    BICYCL::Mpz delta_times_dki = dki;
-    
-    BICYCL::Mpz::mul(delta_times_dki, delta_times_dki, delta);
-    pp.Cl_G().nupow(part_dec, std::get<0>(ciphertext), delta_times_dki);
-
-    return part_dec;
-}
-
-BICYCL::Mpz final_decryption(unsigned int t,
-                             unsigned int n,
-                             BICYCL::QFI &ek,
-                             std::vector<BICYCL::QFI> &eki_values,
-                             std::tuple<BICYCL::QFI, BICYCL::QFI> &ciphertext,
-                             std::vector<BICYCL::QFI> &partial_decryptions,
-                             BICYCL::Mpz &delta,
-                             std::vector<unsigned int> indices,
-                             BICYCL::CL_HSMqk &pp) {
-    BICYCL::QFI M = std::get<1>(ciphertext);
-
-    // store c1^(delta^2) in M
-    pp.Cl_Delta().nupow(M, M, delta);
-    pp.Cl_Delta().nupow(M, M, delta);
-
-    BICYCL::QFI interpolated = IntegerPolynomial::reconstruct_in_power(t, n, partial_decryptions, indices, pp, delta);
-    pp.Cl_Delta().nucompinv(M, M, interpolated);
-    
-    BICYCL::Mpz result = pp.dlog_in_F(M);
-    BICYCL::Mpz::divexact(result, result, delta);
-    BICYCL::Mpz::divexact(result, result, delta);
-    BICYCL::Mpz::mod(result, result, pp.q());
-
-    return result;
-}
-
 void unit_test_threshold_encryption_decryption(unsigned int t,
                                                unsigned int n,
                                                BICYCL::CL_HSMqk &pp,
@@ -1021,15 +1135,15 @@ void unit_test_threshold_encryption_decryption(unsigned int t,
     std::tuple<BICYCL::QFI, BICYCL::QFI> ct = threshold_encryption(ek, delta, message, r, pp);
 
     // each user in threshold group computes partial decryptions
-    std::vector<BICYCL::QFI> part_decs;
+    std::vector<std::tuple<BICYCL::QFI, PartDecZKProof>> part_decs;
     std::vector<unsigned int> indices;
 
     for (size_t i = 0; i < t; ++i) {
         indices.push_back(i + 1);
-        part_decs.push_back(partial_decryption(eki_values[i], ct, dec_key_shares[i], delta, pp));
+        part_decs.push_back(partial_decryption(eki_values[i], ct, dec_key_shares[i], delta, pp, randgen));
     }
 
-    BICYCL::Mpz decrypted = final_decryption(t, n, ek, eki_values, ct, part_decs, delta, indices, pp);
+    BICYCL::Mpz decrypted = final_decryption(t, n, ek, eki_values, ct, part_decs, delta, indices, pp, randgen);
 
     if (message == decrypted) {
         std::cout << "Unit test for threshold encryption and decryption passed.\n";
