@@ -71,6 +71,55 @@ long ComputePrimeBound(long k) {
     x = gen.random_mpz(n);
  }
 
+class PrimeSeq {
+public:
+    PrimeSeq() : current_prime_index(0) {
+        // Precompute a list of prime numbers using the sieve of Eratosthenes up to a reasonable bound
+        generate_primes(10000); // Can adjust the bound as needed
+    }
+
+    // Resets the sequence, starting again at the first prime
+    void reset(long start = 2) {
+        current_prime_index = 0;
+        while (current_prime_index < primes.size() && primes[current_prime_index] < start) {
+            ++current_prime_index;
+        }
+    }
+
+    // Returns the next prime in the sequence, or 0 if we reach the end of the list
+    long next() {
+        if (current_prime_index < primes.size()) {
+            return primes[current_prime_index++];
+        }
+        return 0; // No more primes in the sequence
+    }
+
+private:
+    std::vector<long> primes;
+    size_t current_prime_index;
+
+    // Generates primes using the Sieve of Eratosthenes up to the given bound
+    void generate_primes(long bound) {
+        std::vector<bool> is_prime(bound + 1, true);
+        is_prime[0] = is_prime[1] = false;
+
+        for (long p = 2; p * p <= bound; ++p) {
+            if (is_prime[p]) {
+                for (long i = p * p; i <= bound; i += p) {
+                    is_prime[i] = false;
+                }
+            }
+        }
+
+        // Store all the primes in the vector
+        for (long p = 2; p <= bound; ++p) {
+            if (is_prime[p]) {
+                primes.push_back(p);
+            }
+        }
+    }
+};
+
 bool MillerWitness(BICYCL::Mpz& n, BICYCL::Mpz& W) {
     BICYCL::Mpz n1;
     BICYCL::Mpz::sub(n1,n,1);
@@ -156,7 +205,6 @@ void GenGermainPrime_BICYCL(BICYCL::Mpz& n, long k, long err) {
 
     // define a var of type PrimeSeq using BICYCL library & trezor-crypto library
     
-
     PrimeSeq s;
 
     BICYCL::Mpz iter;
@@ -186,7 +234,10 @@ void GenGermainPrime_BICYCL(BICYCL::Mpz& n, long k, long err) {
             }
 
             // test if 2*r + 1 = 0 (mod p)
-            if (r == p - r - 1) {
+            BICYCL::Mpz r2, r2_1;
+            BICYCL::Mpz::add(r2, r, 1UL);
+            BICYCL::Mpz::sub(r2_1,BICYCL::Mpz(p), r2);
+            if(r.operator==(r2_1)) {
                 sieve_passed = 0;
                 break;
             }
