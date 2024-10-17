@@ -32,6 +32,8 @@ extern "C"
 #include "bip32.h"
 }
 
+#define uchar unsigned char
+
 using std::string;
 using namespace std;
 using namespace BICYCL;
@@ -54,8 +56,21 @@ BICYCL::Mpz mod_exp(BICYCL::Mpz base, BICYCL::Mpz exp, BICYCL::Mpz mod) {
     return result;
 }
 
-// Generating Germain prime
+// function to convert BICYCL::Mpz to unsigned long as class BICYCL::Mpz does not have a direct conversion operator to unsigned long
+unsigned long mpz_to_ulong(const BICYCL::Mpz& mpz) {
+    unsigned long result = 0;
+    std::string mpz_str = BICYCL::Mpz:: get_str(mpz, 10); // Convert BICYCL::Mpz to string
+    try {
+        result = std::stoul(mpz_str); // Convert string to unsigned long
+    } catch (const std::out_of_range& e) {
+        std::cerr << "Value out of range for unsigned long: " << e.what() << std::endl;
+    } catch (const std::invalid_argument& e) {
+        std::cerr << "Invalid argument: " << e.what() << std::endl;
+    }
+    return result;
+}
 
+// Generating Germain prime
 long ComputePrimeBound(long k) {
     return 1L << (k / 2 - 1);
 }
@@ -278,112 +293,181 @@ bool ErrBoundTest(long k, long t, long err) {
 }
 
 
+class FeldmanVSS_BICYCL {
+    static BICYCL::Mpz q;
+    static BICYCL::Mpz g;
+public:
+    vector<BICYCL::Mpz> shares;
+    vector<BICYCL::Mpz> commits;
+    vector<uchar> cipher;
 
-// Generates random coefficients for the secret sharing polynomial
-std::vector<BICYCL::Mpz> generate_coefficients(int k, BICYCL::Mpz secret, BICYCL::Mpz q) {
-    std::vector<BICYCL::Mpz> coefficients(k);
-    coefficients[0] = secret;  // First coefficient is the secret
-    BICYCL::Mpz::mod(coefficients[0], coefficients[0], q);
-    BICYCL::Mpz::mod(coefficients[0], coefficients[0], q);
-    BICYCL::RandGen randgen = BICYCL::RandGen(q);
-    for (int i = 1; i < k; ++i) {
-        coefficients[i] = randgen.random_mpz(q);  // Random coefficients
+    FeldmanVSS_BICYCL();
+
+    void print();
+
+    static void init();
+    static void load(const BICYCL::Mpz &q, const BICYCL::Mpz &g);
+
+    static BICYCL::Mpz get_q();
+    static BICYCL::Mpz get_g();
+
+    static BICYCL::Mpz commit(const BICYCL::Mpz &a);
+    static bool verify(const vector<BICYCL::Mpz> commits, int xval, const BICYCL::Mpz &share);
+
+    // Currently relies on the fact that data is at least 16 bytes
+    static FeldmanVSS_BICYCL split(const vector<uchar> &data);
+    static vector<uchar> reconstruct(const vector<int> &xvec, const vector<BICYCL::Mpz> &shares, const vector<uchar> &cipher);
+};
+
+BICYCL::Mpz FeldmanVSS_BICYCL::q;
+BICYCL::Mpz FeldmanVSS_BICYCL::g;
+
+FeldmanVSS_BICYCL::FeldmanVSS_BICYCL() {}
+
+void FeldmanVSS_BICYCL::print() {
+    cout << "Shares: ";
+    for (const auto &share : shares) {
+        cout << share << " ";
     }
-    return coefficients;
+    cout << endl;
+
+    cout << "Commits: ";
+    for (const auto &commit : commits) {
+        cout << commit << " ";
+    }
+    cout << endl;
 }
 
-// Evaluate polynomial at x for BICYCL::Mpz
-BICYCL::Mpz evaluate_polynomial(const std::vector<BICYCL::Mpz>& coefficients, BICYCL::Mpz x, BICYCL::Mpz q) {
-    BICYCL::Mpz result(0UL);
-    BICYCL::Mpz x_pow(1UL);
-    for (BICYCL::Mpz coeff : coefficients) {
-        BICYCL::Mpz temp;
-        BICYCL::Mpz::mul(temp, coeff, x_pow);
-        BICYCL::Mpz::add(result, result, temp);
-        BICYCL::Mpz::mod(result, result, q);
-        BICYCL::Mpz::mul(x_pow, x_pow, x);
-        BICYCL::Mpz::mod(x_pow, x_pow, q);
+// class BICYCL_px which implements polynomial arithmetic using BICYCL library
+class BICYCL_px {
+  private:
+    std::vector<Mpz> coeffs;
+
+  public:
+    BICYCL_px() = default;
+    explicit BICYCL_px(const std::vector<Mpz>& c) : coeffs(c) {}
+
+    // Degree of the polynomial
+    size_t degree() const {
+        return coeffs.empty() ? 0 : coeffs.size() - 1;
     }
-    return result;
+
+    // Access coefficient
+    Mpz& operator[](size_t i) {
+        return coeffs[i];
+    }
+
+    const Mpz& operator[](size_t i) const {
+        return coeffs[i];
+    }
+
+    // Addition of polynomials
+    BICYCL_px operator+(const BICYCL_px& other) const {
+        size_t max_deg = std::max(degree(), other.degree());
+        std::vector<Mpz> result_coeffs(max_deg + 1);
+
+        for (size_t i = 0; i <= max_deg; ++i) {
+            if (i <= degree()) result_coeffs[i] = coeffs[i];
+            if (i <= other.degree()) BICYCL::Mpz::add(result_coeffs[i], result_coeffs[i], other.coeffs[i]);
+        }
+
+        return BICYCL_px(result_coeffs);
+    }
+
+    // Subtraction of polynomials
+    BICYCL_px operator-(const BICYCL_px& other) const {
+        size_t max_deg = std::max(degree(), other.degree());
+        std::vector<Mpz> result_coeffs(max_deg + 1);
+
+        for (size_t i = 0; i <= max_deg; ++i) {
+            if (i <= degree()) result_coeffs[i] = coeffs[i];
+            if (i <= other.degree()) BICYCL::Mpz::sub(result_coeffs[i], result_coeffs[i], other.coeffs[i]);
+        }
+
+        return BICYCL_px(result_coeffs);
+    }
+
+    // Multiplication of polynomials
+    BICYCL_px operator*(const BICYCL_px& other) const {
+        size_t result_deg = degree() + other.degree();
+        std::vector<Mpz> result_coeffs(result_deg + 1);
+
+        for (size_t i = 0; i <= degree(); ++i) {
+            for (size_t j = 0; j <= other.degree(); ++j) {
+                BICYCL::Mpz product;
+                BICYCL::Mpz::mul(product, coeffs[i], other.coeffs[j]);
+                BICYCL::Mpz::add(result_coeffs[i + j], result_coeffs[i + j], product);
+            }
+        }
+
+        return BICYCL_px(result_coeffs);
+    }
+
+    // Evaluate polynomial at a point
+    BICYCL::Mpz eval(const BICYCL::Mpz& x) const {
+        BICYCL::Mpz result(0UL);
+        BICYCL::Mpz x_pow(1UL);
+
+        for (size_t i = 0; i <= degree(); ++i) {
+            BICYCL::Mpz term;
+            BICYCL::Mpz::mul(term, coeffs[i], x_pow);
+            BICYCL::Mpz::add(result, result, term);
+            BICYCL::Mpz::mul(x_pow, x_pow, x);
+        }
+
+        return result;
+    }
+
+    // Print polynomial
+    friend std::ostream& operator<<(std::ostream& os, const BICYCL_px& poly) {
+        for (size_t i = 0; i <= poly.degree(); ++i) {
+            os << poly.coeffs[i] << "x^" << i;
+            if (i != poly.degree()) os << " + ";
+        }
+        return os;
+    }
+
+};
+
+
+
+void FeldmanVSS_BICYCL::init() {
+    // Initialize q and g with some default values
+
+    // q = BICYCL::Mpz("some_large_prime_value");
+    // g = BICYCL::Mpz("some_generator_value");
+
+    // Generate prime q such that 2q+1 is also a prime
+    // In all code below, p := 2q + 1
+    BICYCL::Mpz q;
+    GenGermainPrime_BICYCL(q, 256, 80);
+    BICYCL::Mpz p;
+    BICYCL::Mpz::mulby2(p, q);
+    BICYCL::Mpz::add(p, p, 1);
+    BICYCL::Mpz b;
+    RandomBnd(b, p);
+    while(b.operator==(0UL))
+        RandomBnd(b, p);
+    g = mod_exp(b, BICYCL::Mpz(2UL), p);
+}
+    
+
+void FeldmanVSS_BICYCL::load(const BICYCL::Mpz &q_val, const BICYCL::Mpz &g_val) {
+    q = q_val;
+    g = g_val;
 }
 
-// Generate shares and verification values
-void generate_shares_and_verifications(int n, int k, BICYCL::Mpz secret, BICYCL::Mpz q, BICYCL::Mpz g,
-                                       std::vector<std::pair<BICYCL::Mpz, BICYCL::Mpz>>& shares,
-                                       std::vector<BICYCL::Mpz>& verification_values) {
-    // Generate the polynomial coefficients
-    std::vector<BICYCL::Mpz> coefficients = generate_coefficients(k, secret, q);
-
-    // Generate verification values A_j = g^a_j mod q
-    verification_values.resize(k);
-    for (int j = 0; j < k; ++j) {
-        verification_values[j] = mod_exp(g, coefficients[j], q);
-    }
-
-    // Generate shares (x_i, f(x_i)) for each player P_i
-    for (long i = 1; i <= n; ++i) {
-        BICYCL::Mpz x_i(i);
-        BICYCL::Mpz y_i = evaluate_polynomial(coefficients, x_i, q);
-        shares.push_back({x_i, y_i});
-    }
+BICYCL::Mpz FeldmanVSS_BICYCL::get_q() {
+    return q;
 }
 
-// Verify a share using the public verification values for BICYCL::Mpz
-bool verify_share(const std::pair<BICYCL::Mpz, BICYCL::Mpz>& share, const std::vector<BICYCL::Mpz>& verification_values, BICYCL::Mpz q, BICYCL::Mpz g) {
-    BICYCL::Mpz x_i = share.first;
-    BICYCL::Mpz f_x_i = share.second;
-
-    // Compute V_i = product(A_j ^ x_i^j) mod q
-    BICYCL::Mpz V_i(1UL);
-    BICYCL::Mpz x_pow(1UL);
-
-    for (int j = 0; j < verification_values.size(); ++j) {
-        BICYCL::Mpz temp;
-        BICYCL::Mpz::pow_mod(temp, verification_values[j], x_pow, q);
-        BICYCL::Mpz::mul(V_i, V_i, temp);
-        BICYCL::Mpz::mod(V_i, V_i, q);
-        BICYCL::Mpz::mul(x_pow, x_pow, x_i);
-        BICYCL::Mpz::mod(x_pow, x_pow, q);
-    }
-
-    // Compute g^f(x_i) mod q
-    BICYCL::Mpz V_i_prime = mod_exp(g, f_x_i, q);
-
-    return V_i == V_i_prime;
+BICYCL::Mpz FeldmanVSS_BICYCL::get_g() {
+    return g;
 }
 
-// Main function to run the Feldman's VSS scheme
-int feldman() {
-    BICYCL::Mpz secret(1234UL);  // Secret to be shared
-    int n = 5;                   // Number of players
-    int k = 3;                   // Threshold number of shares
-    BICYCL::Mpz q(7919UL);       // A large prime modulus
-    BICYCL::Mpz g(2UL);          // Generator for Z_q*
-
-    // Generate shares and verification values
-    std::vector<std::pair<BICYCL::Mpz, BICYCL::Mpz>> shares;
-    std::vector<BICYCL::Mpz> verification_values;
-    generate_shares_and_verifications(n, k, secret, q, g, shares, verification_values);
-
-    // Output the shares and verification values
-    std::cout << "Shares (x_i, f(x_i)):" << std::endl;
-    for (const auto& share : shares) {
-        std::cout << "(" << share.first << ", " << share.second << ")" << std::endl;
-    }
-
-    std::cout << "Verification values A_j:" << std::endl;
-    for (const BICYCL::Mpz& value : verification_values) {
-        std::cout << value << " ";
-    }
-    std::cout << std::endl;
-
-    // Verify each share
-    for (const auto& share : shares) {
-        bool valid = verify_share(share, verification_values, q, g);
-        std::cout << "Share (" << share.first << ", " << share.second << ") is "
-                  << (valid ? "valid" : "invalid") << std::endl;
-    }
-
-    return 0;
+BICYCL::Mpz FeldmanVSS_BICYCL::commit(const BICYCL::Mpz &a) {
+    BICYCL::Mpz p;
+    BICYCL::Mpz::mulby2(p, q);
+    BICYCL::Mpz::add(p, p, 1);
+    return mod_exp(g, a, p);
 }
-
