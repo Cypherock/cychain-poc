@@ -30,6 +30,7 @@ extern "C"
 #include "bignum.h"
 #include "curves.h"
 #include "bip32.h"
+#include "sha2.h"
 }
 
 #define uchar unsigned char
@@ -432,11 +433,6 @@ class BICYCL_px {
 
 
 void FeldmanVSS_BICYCL::init() {
-    // Initialize q and g with some default values
-
-    // q = BICYCL::Mpz("some_large_prime_value");
-    // g = BICYCL::Mpz("some_generator_value");
-
     // Generate prime q such that 2q+1 is also a prime
     // In all code below, p := 2q + 1
     BICYCL::Mpz q;
@@ -470,4 +466,134 @@ BICYCL::Mpz FeldmanVSS_BICYCL::commit(const BICYCL::Mpz &a) {
     BICYCL::Mpz::mulby2(p, q);
     BICYCL::Mpz::add(p, p, 1);
     return mod_exp(g, a, p);
+}
+
+FeldmanVSS_BICYCL FeldmanVSS_BICYCL::split(const vector<uchar> &secret) {
+    if (secret.size() < 16) {
+        throw "split: Secret not long enough";
+    }
+
+    BICYCL::Mpz p;
+    BICYCL::Mpz::mulby2(p, q);
+    BICYCL::Mpz::add(p, p, 1);
+
+    // Generate random linear polynomial 'f' for Shamir SS
+    // f = (c[0] + c[1]x) mod q
+    std::vector<BICYCL::Mpz> coeffs(2);
+    BICYCL::RandGen gen;
+    coeffs[0] = gen.random_mpz(q);
+    coeffs[1] = gen.random_mpz(q);
+    BICYCL_px f(coeffs);
+
+    FeldmanVSS_BICYCL out;
+
+    // Computing shares for each party
+    // shares[i] := f(i) mod q, for i in [1, 4]
+    for (int i = 1; i <= 4; ++i) {
+        BICYCL::Mpz x((long)i);
+        BICYCL::Mpz share = f.eval(x);
+        out.shares.push_back(share);
+    }
+
+    // Computing the commitments for the coefficients
+    // commits[i] := g^(c[i]) mod p
+    for (const auto &coeff : coeffs) {
+        out.commits.push_back(commit(coeff));
+    }
+
+    // Getting 'data stream' from BICYCL::Mpz type for constant term (c[0])
+    std::string c_str = coeffs[0].get_str(BICYCL::Mpz(10UL), 10);
+    std::vector<uchar> c(c_str.begin(), c_str.end());
+
+    // Computing key
+    // key := KDF(c[0])
+    uchar key[SHA256_DIGEST_LENGTH];
+    SHA256_CTX ctx;
+    sha256_Init(&ctx);
+    sha256_Update(&ctx, c.data(), c.size());
+    sha256_Final(&ctx, key);
+
+    // Encrypting secret
+    // cipher := secret + key
+    out.cipher.resize(secret.size());
+    for (size_t i = 0; i < secret.size(); ++i) {
+        out.cipher[i] = secret[i] ^ key[i % SHA256_DIGEST_LENGTH];
+    }
+
+    return out;
+}
+
+bool FeldmanVSS_BICYCL::verify(const vector<BICYCL::Mpz> commits, int xval, const BICYCL::Mpz &share) {
+    if (commits.size() < 2) {
+        throw "verify: Expected 2 commits";
+    }
+
+    BICYCL::Mpz p;
+    BICYCL::Mpz::mulby2(p, q);
+    BICYCL::Mpz::add(p, p, 1);
+
+    BICYCL::Mpz acc = commits[0];
+    BICYCL::Mpz xval_mpz((long)xval);
+    BICYCL::Mpz exp_commit;
+    exp_commit = mod_exp(commits[1], xval_mpz, p);
+    BICYCL::Mpz::mul(acc, acc, exp_commit);
+    BICYCL::Mpz::mod(acc, acc, p);
+
+    BICYCL::Mpz share_commit = commit(share);
+
+    return (acc == share_commit);
+}
+
+vector<uchar> FeldmanVSS_BICYCL::reconstruct(
+    const vector<int> &xvec,
+    const vector<BICYCL::Mpz> &shares,
+    const vector<uchar> &cipher
+) {
+    if (xvec.size() < 2 || shares.size() < 2 || cipher.size() < 16) {
+        throw "reconstruct: Input size shorter than expected";
+    }
+
+    BICYCL::Mpz q = get_q();
+    BICYCL_px f;
+
+    // Lagrange interpolation to find the constant term c[0]
+    for (size_t i = 0; i < xvec.size(); ++i) {
+        BICYCL::Mpz num(1UL), denom(1UL);
+        for (size_t j = 0; j < xvec.size(); ++j) {
+            if (i != j) {
+                BICYCL::Mpz xj((long)xvec[j]);
+                BICYCL::Mpz xi((long)xvec[i]);
+                BICYCL::Mpz diff;
+                BICYCL::Mpz::sub(diff, xj, xi);
+                BICYCL::Mpz::mul(num, num, xj);
+                BICYCL::Mpz::mul(denom, denom, diff);
+            }
+        }
+        BICYCL::Mpz inv_denom;
+        BICYCL::Mpz::divexact(inv_denom, BICYCL::Mpz(1UL), denom);
+        BICYCL::Mpz::mod(inv_denom, inv_denom, q);
+        BICYCL::Mpz term;
+        BICYCL::Mpz::mul(term, shares[i], num);
+        BICYCL::Mpz::mul(term, term, inv_denom);
+        BICYCL::Mpz::add(f[0], f[0], term);
+    }
+
+    // Get 'data stream' of constant term
+    std::string c_str = f[0].get_str(BICYCL::Mpz(10UL), 10);
+    std::vector<uchar> c(c_str.begin(), c_str.end());
+
+    // Compute key from constant term
+    uchar key[SHA256_DIGEST_LENGTH];
+    SHA256_CTX ctx;
+    sha256_Init(&ctx);
+    sha256_Update(&ctx, c.data(), c.size());
+    sha256_Final(&ctx, key);
+
+    // Decrypt cipher
+    vector<uchar> secret(cipher.size());
+    for (size_t i = 0; i < cipher.size(); ++i) {
+        secret[i] = cipher[i] ^ key[i % SHA256_DIGEST_LENGTH];
+    }
+
+    return secret;
 }
