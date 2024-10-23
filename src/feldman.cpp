@@ -1,27 +1,3 @@
-#include <string>
-#include <iostream>
-#include <chrono>
-#include <vector>
-#include <cmath>
-#include <map>
-#include <random>
-#include <openssl/rand.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <vector>
-#include <future>
-
-#include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <queue>
-#include <functional>
-#include <atomic>
-#include <future>
-
-#include "ThreadPool.h"
-#include "CryptoUtils.h"
-
 #include "bicycl.hpp"
 
 extern "C"
@@ -32,7 +8,7 @@ extern "C"
 #include "bip32.h"
 #include "sha2.h"
 }
-
+#include "feldman.h"
 #define uchar unsigned char
 
 using std::string;
@@ -96,55 +72,6 @@ long ComputePrimeBound(long k) {
     BICYCL::RandGen gen;
     x = gen.random_mpz(n);
  }
-
-class PrimeSeq {
-public:
-    PrimeSeq() : current_prime_index(0) {
-        // Precompute a list of prime numbers using the sieve of Eratosthenes up to a reasonable bound
-        generate_primes(10000); // Can adjust the bound as needed
-    }
-
-    // Resets the sequence, starting again at the first prime
-    void reset(long start = 2) {
-        current_prime_index = 0;
-        while (current_prime_index < primes.size() && primes[current_prime_index] < start) {
-            ++current_prime_index;
-        }
-    }
-
-    // Returns the next prime in the sequence, or 0 if we reach the end of the list
-    long next() {
-        if (current_prime_index < primes.size()) {
-            return primes[current_prime_index++];
-        }
-        return 0; // No more primes in the sequence
-    }
-
-private:
-    std::vector<long> primes;
-    size_t current_prime_index;
-
-    // Generates primes using the Sieve of Eratosthenes up to the given bound
-    void generate_primes(long bound) {
-        std::vector<bool> is_prime(bound + 1, true);
-        is_prime[0] = is_prime[1] = false;
-
-        for (long p = 2; p * p <= bound; ++p) {
-            if (is_prime[p]) {
-                for (long i = p * p; i <= bound; i += p) {
-                    is_prime[i] = false;
-                }
-            }
-        }
-
-        // Store all the primes in the vector
-        for (long p = 2; p <= bound; ++p) {
-            if (is_prime[p]) {
-                primes.push_back(p);
-            }
-        }
-    }
-};
 
 bool MillerWitness(BICYCL::Mpz& n, BICYCL::Mpz& W) {
     BICYCL::Mpz n1;
@@ -228,8 +155,6 @@ void GenGermainPrime_BICYCL(BICYCL::Mpz& n, long k, long err) {
     BICYCL::Mpz two;
     two.operator=(2UL);
     BICYCL::Mpz n1;
-
-    // define a var of type PrimeSeq using BICYCL library & trezor-crypto library
     
     PrimeSeq s;
 
@@ -304,39 +229,6 @@ bool ErrBoundTest(long k, long t, long err) {
 }
 
 
-class FeldmanVSS_BICYCL {
-    static BICYCL::Mpz q;
-    static BICYCL::Mpz g;
-public:
-    vector<BICYCL::Mpz> shares;
-    vector<BICYCL::Mpz> commits;
-    vector<uchar> cipher;
-
-    FeldmanVSS_BICYCL();
-
-    void print();
-
-    static void init();
-    static void load(const BICYCL::Mpz &q, const BICYCL::Mpz &g);
-
-    static BICYCL::Mpz get_q();
-    static BICYCL::Mpz get_g();
-
-    static BICYCL::Mpz commit(const BICYCL::Mpz &a);
-    static bool verify(const vector<BICYCL::Mpz> commits, int xval, const BICYCL::Mpz &share);
-
-    // Currently relies on the fact that data is at least 16 bytes
-    static FeldmanVSS_BICYCL split(const vector<uchar> &data);
-    static vector<uchar> reconstruct(const vector<int> &xvec, const vector<BICYCL::Mpz> &shares, const vector<uchar> &cipher);
-
-    bool prove_secret_correctness(const vector<BICYCL::Mpz> &commits, const vector<int> &xvec, const vector<BICYCL::Mpz> &sharesl);
-    bool verify_secret_correctness(const vector<BICYCL::Mpz> &commits, const vector<int> &xvec, const vector<BICYCL::Mpz> &shares);
-    bool prove_share_correctness(const BICYCL::Mpz &commit, const BICYCL::Mpz &share, int xval);
-    bool verify_share_correctness(const BICYCL::Mpz &commit, const BICYCL::Mpz &share, int xval);
-    bool prove_same_secret(const vector<uchar> &original_secret, const vector<uchar> &reconstructed_secret); 
-    bool verify_same_secret(const vector<uchar> &original_secret, const vector<uchar> &reconstructed_secret);
-};
-
 BICYCL::Mpz FeldmanVSS_BICYCL::q;
 BICYCL::Mpz FeldmanVSS_BICYCL::g;
 
@@ -355,97 +247,6 @@ void FeldmanVSS_BICYCL::print() {
     }
     cout << endl;
 }
-
-// class BICYCL_px which implements polynomial arithmetic using BICYCL library
-class BICYCL_px {
-  private:
-    std::vector<Mpz> coeffs;
-
-  public:
-    BICYCL_px() = default;
-    explicit BICYCL_px(const std::vector<Mpz>& c) : coeffs(c) {}
-
-    // Degree of the polynomial
-    size_t degree() const {
-        return coeffs.empty() ? 0 : coeffs.size() - 1;
-    }
-
-    // Access coefficient
-    Mpz& operator[](size_t i) {
-        return coeffs[i];
-    }
-
-    const Mpz& operator[](size_t i) const {
-        return coeffs[i];
-    }
-
-    // Addition of polynomials
-    BICYCL_px operator+(const BICYCL_px& other) const {
-        size_t max_deg = std::max(degree(), other.degree());
-        std::vector<Mpz> result_coeffs(max_deg + 1);
-
-        for (size_t i = 0; i <= max_deg; ++i) {
-            if (i <= degree()) result_coeffs[i] = coeffs[i];
-            if (i <= other.degree()) BICYCL::Mpz::add(result_coeffs[i], result_coeffs[i], other.coeffs[i]);
-        }
-
-        return BICYCL_px(result_coeffs);
-    }
-
-    // Subtraction of polynomials
-    BICYCL_px operator-(const BICYCL_px& other) const {
-        size_t max_deg = std::max(degree(), other.degree());
-        std::vector<Mpz> result_coeffs(max_deg + 1);
-
-        for (size_t i = 0; i <= max_deg; ++i) {
-            if (i <= degree()) result_coeffs[i] = coeffs[i];
-            if (i <= other.degree()) BICYCL::Mpz::sub(result_coeffs[i], result_coeffs[i], other.coeffs[i]);
-        }
-
-        return BICYCL_px(result_coeffs);
-    }
-
-    // Multiplication of polynomials
-    BICYCL_px operator*(const BICYCL_px& other) const {
-        size_t result_deg = degree() + other.degree();
-        std::vector<Mpz> result_coeffs(result_deg + 1);
-
-        for (size_t i = 0; i <= degree(); ++i) {
-            for (size_t j = 0; j <= other.degree(); ++j) {
-                BICYCL::Mpz product;
-                BICYCL::Mpz::mul(product, coeffs[i], other.coeffs[j]);
-                BICYCL::Mpz::add(result_coeffs[i + j], result_coeffs[i + j], product);
-            }
-        }
-
-        return BICYCL_px(result_coeffs);
-    }
-
-    // Evaluate polynomial at a point
-    BICYCL::Mpz eval(const BICYCL::Mpz& x) const {
-        BICYCL::Mpz result(0UL);
-        BICYCL::Mpz x_pow(1UL);
-
-        for (size_t i = 0; i <= degree(); ++i) {
-            BICYCL::Mpz term;
-            BICYCL::Mpz::mul(term, coeffs[i], x_pow);
-            BICYCL::Mpz::add(result, result, term);
-            BICYCL::Mpz::mul(x_pow, x_pow, x);
-        }
-
-        return result;
-    }
-
-    // Print polynomial
-    friend std::ostream& operator<<(std::ostream& os, const BICYCL_px& poly) {
-        for (size_t i = 0; i <= poly.degree(); ++i) {
-            os << poly.coeffs[i] << "x^" << i;
-            if (i != poly.degree()) os << " + ";
-        }
-        return os;
-    }
-
-};
 
 void FeldmanVSS_BICYCL::init() {
     // Generate prime q such that 2q+1 is also a prime
@@ -612,91 +413,6 @@ vector<uchar> FeldmanVSS_BICYCL::reconstruct(
 
     return secret;
 }
-
-// // implement the zero knowledge proof for FeldmanVSS using BICYCL library and trezor crypto library
-// bool FeldmanVSS_BICYCL::prove_share_correctness(const BICYCL::Mpz &share, const BICYCL::Mpz &commit_value, int xval) {
-//     BICYCL::Mpz p;
-//     BICYCL::Mpz::mulby2(p, q);
-//     BICYCL::Mpz::add(p, p, 1);
-//     BICYCL::Mpz share_commit = commit(share);
-//     BICYCL::Mpz expected_commit = mod_exp(commit_value, BICYCL::Mpz((unsigned long)xval), p);
-//     return (share_commit == expected_commit);
-// }
-
-// bool FeldmanVSS_BICYCL::verify_share_correctness(const BICYCL::Mpz &commit_value, const BICYCL::Mpz &share, int xval) {
-//     BICYCL::Mpz p;
-//     BICYCL::Mpz::mulby2(p, q);
-//     BICYCL::Mpz::add(p, p, 1);
-//     BICYCL::Mpz expected_commit = mod_exp(commit_value, BICYCL::Mpz((unsigned long)xval), p);
-//     BICYCL::Mpz share_commit = commit(share);
-//     return (share_commit == expected_commit);
-// }
-
-
-// //implement zkp for secret correctness using BICYCL library and trezor-crypto library
-// bool FeldmanVSS_BICYCL::prove_secret_correctness(const vector<BICYCL::Mpz> &commits, const vector<int> &xvec, const vector<BICYCL::Mpz> &shares) {
-//     if (commits.size() < 2 || shares.size() < 2 || xvec.size() < 2) {
-//         throw "prove_secret_correctness: Input size shorter than expected";
-//     }
-
-//     BICYCL::Mpz p;
-//     BICYCL::Mpz::mulby2(p, q);
-//     BICYCL::Mpz::add(p, p, 1);
-
-//     BICYCL::Mpz acc = commits[0];
-//     for (size_t i = 1; i < commits.size(); ++i) {
-//         BICYCL::Mpz exp_commit = mod_exp(commits[i], BICYCL::Mpz((unsigned long)xvec[i - 1]), p);
-//         BICYCL::Mpz::mul(acc, acc, exp_commit);
-//         BICYCL::Mpz::mod(acc, acc, p);
-//     }
-
-//     BICYCL::Mpz x1((unsigned long)xvec[1]);
-//     BICYCL::Mpz x0((unsigned long)xvec[0]);
-//     BICYCL::Mpz term1, term2, denom, num;
-
-//     BICYCL::Mpz::mul(term1, x1, shares[0]);
-//     BICYCL::Mpz::mul(term2, x0, shares[1]);
-//     BICYCL::Mpz::sub(num, term1, term2);
-//     BICYCL::Mpz::sub(denom, x1, x0);
-//     BICYCL::Mpz reconstructed_secret;
-//     BICYCL::Mpz::divexact(reconstructed_secret, num, denom);
-
-//     BICYCL::Mpz reconstructed_commit = commit(reconstructed_secret);
-
-//     return (acc == reconstructed_commit);
-// }
-
-// bool FeldmanVSS_BICYCL::verify_secret_correctness(const vector<BICYCL::Mpz> &commits, const vector<int> &xvec, const vector<BICYCL::Mpz> &shares) {
-//     if (commits.size() < 2 || shares.size() < 2 || xvec.size() < 2) {
-//         throw "verify_share_correctness: Input size shorter than expected";
-//     }
-
-//     BICYCL::Mpz p;
-//     BICYCL::Mpz::mulby2(p, q);
-//     BICYCL::Mpz::add(p, p, 1);
-
-//     BICYCL::Mpz acc = commits[0];
-//     for (size_t i = 1; i < commits.size(); ++i) {
-//         BICYCL::Mpz exp_commit = mod_exp(commits[i], BICYCL::Mpz((unsigned long)xvec[i - 1]), p);
-//         BICYCL::Mpz::mul(acc, acc, exp_commit);
-//         BICYCL::Mpz::mod(acc, acc, p);
-//     }
-
-//     BICYCL::Mpz x1((unsigned long)xvec[1]);
-//     BICYCL::Mpz x0((unsigned long)xvec[0]);
-//     BICYCL::Mpz term1, term2, denom, num, reconstructed_secret;
-
-//     BICYCL::Mpz::mul(term1, x1, shares[0]);
-//     BICYCL::Mpz::mul(term2, x0, shares[1]);
-//     BICYCL::Mpz::sub(num, term1, term2);
-//     BICYCL::Mpz::sub(denom, x1, x0);
-//     BICYCL::Mpz::divexact(reconstructed_secret, num, denom);
-
-//     BICYCL::Mpz reconstructed_commit = commit(reconstructed_secret);
-
-//     return (acc == reconstructed_commit);
-// }
-
 
 //implement zkp for the same secret using BICYCL library and trezor-crypto library
 bool FeldmanVSS_BICYCL::prove_same_secret(const vector<uchar> &original_secret, const vector<uchar> &reconstructed_secret) {
